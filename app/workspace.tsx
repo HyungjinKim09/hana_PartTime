@@ -10,6 +10,7 @@ import {folderLabel,type Folder,type Photo} from '@/lib/types';
 import {FolderRemarks,DailyReportButton} from './report-tools';
 import {ImportSchedule} from './import-schedule';
 import {registerPhotoTools} from '@/lib/webmcp';
+import type {BudgetUsage} from '@/lib/r2-budget';
 
 const formatBytes=(n:number)=>n>=1024**3?`${(n/1024**3).toFixed(1)} GB`:n>=1024**2?`${(n/1024**2).toFixed(1)} MB`:`${Math.ceil(n/1024)} KB`;
 const dateText=(value:string)=>new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
@@ -18,6 +19,7 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
   const [remarksDirty,setRemarksDirty]=useState(false);
   const [region,setRegion]=useState<string|null>(null),[date,setDate]=useState<string|null>(null),[importing,setImporting]=useState(false);
   const [folders,setFolders]=useState<Folder[]>([]),[photos,setPhotos]=useState<Photo[]>([]);
+  const [usage,setUsage]=useState<BudgetUsage|null>(null);
   const [selected,setSelected]=useState<string|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState('');
   const [uploading,setUploading]=useState(false),[progress,setProgress]=useState({done:0,total:0}),[failed,setFailed]=useState<File[]>([]);
   const [preview,setPreview]=useState<Photo|null>(null),[deleting,setDeleting]=useState<Photo|null>(null),[deleteBusy,setDeleteBusy]=useState(false);
@@ -26,7 +28,7 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
   const active=folders.find(f=>f.id===selected), total=folders.reduce((n,f)=>n+f.count,0),bytes=folders.reduce((n,f)=>n+f.bytes,0);
   const refresh=useCallback(async(folder:string|null,quiet=false)=>{
     const seq=++sequence.current; if(!quiet)setLoading(true);
-    try{const r=await fetch('/api/library'+(folder?'?folder='+encodeURIComponent(folder):''),{cache:'no-store'});const data=await r.json() as {error?:string;folders:Folder[];photos:Photo[]};if(!r.ok)throw new Error(data.error||'불러오지 못했습니다.');if(seq===sequence.current){setFolders(data.folders);setPhotos(data.photos);setError('');}}
+    try{const r=await fetch('/api/library'+(folder?'?folder='+encodeURIComponent(folder):''),{cache:'no-store'});const data=await r.json() as {error?:string;folders:Folder[];photos:Photo[];usage:BudgetUsage};if(!r.ok)throw new Error(data.error||'불러오지 못했습니다.');if(seq===sequence.current){setFolders(data.folders);setPhotos(data.photos);setUsage(data.usage);setError('');}}
     catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'연결을 확인해 주세요.');}
     finally{if(seq===sequence.current)setLoading(false);}
   },[]);
@@ -73,6 +75,15 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
         <nav aria-label="현재 위치" className="breadcrumb"><button disabled={uploading} onClick={()=>location(null)}>전체 지역</button>{region&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region)}>{region}</button></>}{date&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date)}>{date}</button></>}{active&&<><ChevronRight size={14}/><span>{folderLabel(active)}</span></>}</nav>
         <section className="page-heading"><div><div className="eyebrow">FIELD SURVEY · PHOTO ARCHIVE</div><h1>{active?folderLabel(active):date?`${date} 현장조사`:region||'현장조사 보관함'}<span className="heading-label">{active?'일정 폴더':date?'일정별':region?'날짜별':'지역별'}</span></h1><p>{active?active.address:'일정표 사진을 등록하고 지역 · 날짜 · 번지별로 현장 사진을 모으세요.'}</p></div><div className="heading-actions">{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={uploading||remarksDirty} onClick={()=>setImporting(true)}><CloudUpload size={18}/>일정표 사진 등록</button><button className="primary-button" onClick={()=>setExportScope(null)} disabled={loading||uploading||!!error}><Archive size={18}/>{region?'현재 폴더 다운로드':'전체 다운로드'}</button></div></section>
         {error&&<div className="error-banner" role="alert"><TriangleAlert size={19}/><span>{error}</span><button onClick={()=>refresh(selected)}>다시 시도</button></div>}
+        {usage&&<section aria-label="보관함 사용 한도">
+          <div className="overview-strip">
+            <div><span>사진·일정표 저장</span><strong>{(usage.storageBytes/1e9).toFixed(2)}<small>/ {usage.storageLimit/1e9} GB</small></strong></div>
+            <div><span>최근 {usage.windowDays}일 업로드 요청</span><strong>{usage.writes.toLocaleString()}<small>/ {usage.writeLimit.toLocaleString()}회</small></strong></div>
+            <div><span>최근 {usage.windowDays}일 사진 읽기</span><strong>{usage.reads.toLocaleString()}<small>/ {usage.readLimit.toLocaleString()}회</small></strong></div>
+          </div>
+          <p className="export-help">한도에 도달하면 해당 업로드·사진 열기·다운로드가 중단됩니다. 기존 자료는 자동 삭제되지 않습니다. 사진 읽기에는 미리보기와 ZIP에 담긴 각 파일이 포함됩니다.</p>
+          {(usage.storageBytes>=usage.storageLimit||usage.writes>=usage.writeLimit||usage.reads>=usage.readLimit)&&<p className="error-banner" role="status">사용 한도에 도달했습니다. 저장 공간은 불필요한 사진을 직접 삭제하면 확보할 수 있고, 요청 한도는 최근 32일 사용량이 줄어들면 다시 이용할 수 있습니다.</p>}
+        </section>}
         {!active&&!selected&&<><div className="overview-strip"><div><span>조사 일정</span><strong>{scoped.length}<small>곳</small></strong></div><div><span>사진 있는 폴더</span><strong>{scoped.filter(f=>f.count>0).length}<small>/ {scoped.length}</small></strong></div><div><span>보관한 사진</span><strong>{scoped.reduce((n,f)=>n+f.count,0)}<small>장</small></strong></div><div className="storage-stat"><CloudUpload size={20}/><span>원본 저장<small>{formatBytes(scoped.reduce((n,f)=>n+f.bytes,0))}</small></span></div></div>
           <div className="section-heading"><h2><FolderOpen size={20}/>{date?'번지별 일정 폴더':region?'조사 날짜 폴더':'지역 폴더'} <span>{date?scoped.length:region?dates.length:regions.length}</span></h2><button className="subtle-button" onClick={()=>refresh(null)} disabled={loading}><RefreshCw size={15} className={loading?'spin':''}/>새로고침</button></div>
           {loading&&!folders.length?<div className="loading-block" role="status">일정과 사진 보관함을 불러오고 있어요.</div>:!date?<div className="folder-grid">{(region?dates:regions).map(value=>{const items=scoped.filter(f=>region?f.date===value:f.region===value);return <button className="folder-card hierarchy-card" key={value} onClick={()=>region?location(region,value):location(value)}><div className="folder-card-top"><FolderIcon className="folder-symbol" size={46} strokeWidth={1.35}/><ChevronRight size={18}/></div><h3>{value}</h3><p>{region?`${items.length}개 일정`:`${new Set(items.map(f=>f.date)).size}개 조사 날짜`}</p><div className="folder-card-bottom"><span><ImageIcon size={15}/>{items.reduce((n,f)=>n+f.count,0)}장의 사진</span><span>폴더 열기</span></div></button>;})}</div>:[...new Set(scoped.map(f=>f.group))].map(group=><section className="schedule-group" key={group}><div className="group-label">일정 그룹 {group}<span>{scoped.filter(f=>f.group===group).length}개 폴더</span></div><div className="folder-grid">{scoped.filter(f=>f.group===group).map(f=><button className="folder-card" key={f.id} onClick={()=>navigate(f.id)}><div className="folder-card-top"><FolderIcon className="folder-symbol" size={42} strokeWidth={1.35}/>{f.time&&<span className="time-pill"><Clock size={13}/>{f.time}</span>}</div><h3>{f.lot}</h3>{f.unit&&<p className="unit-label">{f.unit}</p>}<p>{f.address||'일정별 현장 사진'}</p>{f.surveyStatus&&f.surveyStatus!=='미완료'&&<span className="survey-status">{f.surveyStatus}</span>}<div className="folder-card-bottom"><span><ImageIcon size={15}/>{f.count?`${f.count}장의 사진`:'사진 없음'}</span>{f.warning?<span className="warning-label">2인 방문</span>:<ChevronRight size={17}/>}</div></button>)}</div></section>)}

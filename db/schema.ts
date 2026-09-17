@@ -1,4 +1,8 @@
 import {sqliteTable, text, integer, index, primaryKey, uniqueIndex} from 'drizzle-orm/sqlite-core';
+// Aggregate maintenance triggers live in migration 0006.
+export const r2StorageUsage=sqliteTable('r2_storage_usage',{id:integer('id').primaryKey(),bytes:integer('bytes').notNull()});
+export const r2ObjectUsage=sqliteTable('r2_object_usage',{objectKey:text('object_key').primaryKey(),size:integer('size').notNull()});
+export const r2OperationUsage=sqliteTable('r2_operation_usage',{day:text('day').notNull(),kind:text('kind').notNull(),amount:integer('amount').notNull()},t=>[primaryKey({columns:[t.day,t.kind]})]);
 export const siteAccount=sqliteTable('site_account',{
   id:integer('id').primaryKey(),owner:text('owner').notNull(),username:text('username').notNull(),salt:text('salt').notNull(),passwordHash:text('password_hash').notNull(),version:integer('version').notNull(),
 });

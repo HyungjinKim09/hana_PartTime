@@ -1,6 +1,7 @@
 import {listFolders,findFolder} from '@/lib/folders';
 import {ApiError,failure,identity,json,storage,limitedBody,imageType} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
+import {budgetUsage} from '@/lib/r2-budget';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){try{
   const owner=await identity();const {db}=storage();
@@ -8,7 +9,7 @@ export async function GET(request:Request){try{
   const folders=await listFolders(db,owner);
   if(folder && !folders.some(f=>f.id===folder)) throw new ApiError('폴더를 찾을 수 없습니다.',404);
   const photos=folder ? (await db.prepare('SELECT id,folder,filename,content_type,size,created_at FROM photos WHERE owner=? AND folder=? AND deleted=0 ORDER BY created_at DESC,id DESC').bind(owner,folder).all()).results:[];
-  return json({folders,photos});
+  return json({folders,photos,usage:await budgetUsage(db)});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
   const owner=await identity(request);const {db,bucket}=storage();const url=new URL(request.url);

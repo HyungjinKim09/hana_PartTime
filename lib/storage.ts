@@ -1,5 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {sessionUser} from './site-auth';
+import {BudgetError,guardedBucket} from './r2-budget';
 export class ApiError extends Error { constructor(message:string,public status=400){super(message);} }
 export async function identity(request?:Request) {
   const user=await sessionUser();
@@ -13,11 +14,11 @@ export async function identity(request?:Request) {
 }
 export function storage(){
   if(!env.DB || !env.BUCKET) throw new ApiError('사진 보관함에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',503);
-  return {db:env.DB,bucket:env.BUCKET};
+  return {db:env.DB,bucket:guardedBucket(env.DB,env.BUCKET)};
 }
 export function json(data:unknown,status=200){return Response.json(data,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});}
 export function failure(error:unknown){
-  if(error instanceof ApiError) return json({error:error.message},error.status);
+  if(error instanceof ApiError || error instanceof BudgetError) return json({error:error.message},error.status);
   console.error('Photo storage operation failed',error instanceof Error?error.message:'Unknown error');
   return json({error:'처리하지 못했습니다. 원본 사진은 기기에 보관하고 잠시 후 다시 시도해 주세요.'},503);
 }
