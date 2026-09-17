@@ -18,6 +18,7 @@ const formatBytes=(n:number)=>n>=1024**3?`${(n/1024**3).toFixed(1)} GB`:n>=1024*
 const dateText=(value:string)=>new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
 export default function Workspace({userName,isAdmin=false}:{userName:string;isAdmin?:boolean}){
   useEffect(registerPhotoTools,[]);
+  const [folderDelete,setFolderDelete]=useState(false),[folderDeleteBusy,setFolderDeleteBusy]=useState(false);
   const [manualImport,setManualImport]=useState(false);
   const [remarksDirty,setRemarksDirty]=useState(false);
   const [region,setRegion]=useState<string|null>(null),[date,setDate]=useState<string|null>(null),[importing,setImporting]=useState(false);
@@ -59,14 +60,52 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
     const r=await fetch('/api/library?id='+encodeURIComponent(deleting.id),{method:'DELETE'});const data=await r.json() as {error?:string};if(!r.ok)throw new Error(data.error);
     toast.success('사진을 삭제했어요.');setDeleting(null);await refresh(selected,true);
   }catch(e){toast.error(e instanceof Error?e.message:'삭제하지 못했습니다.');}finally{setDeleteBusy(false);}}
-  function navigate(id:string|null){if(remarksDirty){toast.info('비고를 저장한 뒤 이동해 주세요.');return;}if(!uploading){setSelected(id);window.scrollTo({top:0,behavior:'smooth'});}}
+  function navigate(id:string|null){location(region,date,id);}
   const exportFolder=folders.find(f=>f.id===exportScope);
   const scoped=folders.filter(f=>(!region||f.region===region)&&(!date||f.date===date));
   const regions=[...new Set(folders.map(f=>f.region))];
   const dates=[...new Set(scoped.map(f=>f.date))].sort().reverse();
   const exportQuery=new URLSearchParams(exportFolder?{folder:exportFolder.id}:region?date?{region,date}:{region}:{});
   const exportItems=exportFolder?[exportFolder]:scoped;
-  function location(r:string|null,d:string|null=null,id:string|null=null){if(uploading)return;if(remarksDirty){toast.info('비고를 저장한 뒤 이동해 주세요.');return;}setRegion(r);setDate(d);navigate(id);}
+  const navigationGuard=useRef({uploading:false,remarksDirty:false,folderDeleteBusy:false});
+  navigationGuard.current={uploading,remarksDirty,folderDeleteBusy};
+  const historyPosition=useRef<{index:number;parents:number[]}>({index:0,parents:[]});
+  function locationUrl(r:string|null,d:string|null,id:string|null){const q=new URLSearchParams();if(r)q.set('region',r);if(d)q.set('date',d);if(id)q.set('folder',id);return window.location.pathname+window.location.search+(q.size?'#'+q.toString():'');}
+  function pushLocation(r:string|null,d:string|null,id:string|null){
+    const url=locationUrl(r,d,id);if(url===window.location.pathname+window.location.search+window.location.hash)return;
+    const depth=id?3:d?2:r?1:0,previous=historyPosition.current,parents=previous.parents.slice(0,depth);
+    if(parents.length<depth)parents.push(previous.index);
+    const position={index:previous.index+1,parents};window.history.pushState({...window.history.state,hanaNavigation:position},'',url);historyPosition.current=position;
+  }
+  useEffect(()=>{
+    const restore=()=>{historyPosition.current=window.history.state?.hanaNavigation||{index:0,parents:[]};const q=new URLSearchParams(window.location.hash.slice(1));setRegion(q.get('region'));setDate(q.get('date'));setSelected(q.get('folder'));setPreview(null);setExportScope(undefined);setImporting(false);setFolderDelete(false);setRemarksDirty(false);};
+    const pop=()=>{
+      const old=historyPosition.current,next=window.history.state?.hanaNavigation as typeof old|undefined,g=navigationGuard.current;
+      if(next?.index===old.index)return;
+      if(next&&next.index!==old.index){
+        if(g.uploading||g.folderDeleteBusy||(g.remarksDirty&&!window.confirm('저장하지 않은 비고를 버리고 이동할까요?'))){window.history.go(old.index-next.index);return;}
+        if(next.index<old.index&&old.parents.length&&!old.parents.includes(next.index)){window.history.go(old.parents[old.parents.length-1]-next.index);return;}
+      }
+      restore();
+    };
+    if(!window.history.state?.hanaNavigation){const q=new URLSearchParams(window.location.hash.slice(1)),r=q.get('region'),d=q.get('date'),id=q.get('folder');historyPosition.current={index:0,parents:[]};window.history.replaceState({...window.history.state,hanaNavigation:historyPosition.current},'',locationUrl(null,null,null));if(r)pushLocation(r,null,null);if(r&&d)pushLocation(r,d,null);if(r&&d&&id)pushLocation(r,d,id);}
+    restore();window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);
+  },[]);
+  function location(r:string|null,d:string|null=null,id:string|null=null){
+    if(uploading||folderDeleteBusy)return;if(remarksDirty){toast.info('비고를 저장한 뒤 이동해 주세요.');return;}
+    const depth=selected?3:date?2:region?1:0,nextDepth=id?3:d?2:r?1:0;
+    if(nextDepth<depth&&(!r||r===region)&&(!d||d===date)){const position=historyPosition.current;window.history.go(position.parents[nextDepth]-position.index);return;}
+    if(r&&r!==region)pushLocation(r,null,null);if(r&&d&&(r!==region||d!==date))pushLocation(r,d,null);pushLocation(r,d,id);
+    setRegion(r);setDate(d);setSelected(id);window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function removeFolder(){
+    if(!region||folderDeleteBusy)return;setFolderDeleteBusy(true);
+    const query=new URLSearchParams(active?{id:active.id}:date?{region,date}:{region});
+    try{let continuation:unknown=undefined;for(;;){const response=await fetch('/api/folders?'+query,{method:'DELETE',headers:continuation?{'Content-Type':'application/json'}:undefined,body:continuation?JSON.stringify(continuation):undefined});const result=await response.json() as {error?:string;deleted:boolean;continuation?:unknown};if(!response.ok)throw new Error(result.error||'폴더를 삭제하지 못했습니다. 같은 삭제 버튼으로 다시 시도해 주세요.');if(result.deleted)break;continuation=result.continuation;if(!continuation)throw new Error('삭제 진행을 확인하지 못했습니다. 다시 시도해 주세요.');}
+      const next=active?{r:region,d:date}:date?{r:region,d:null}:{r:null,d:null};
+      setFolderDeleteBusy(false);navigationGuard.current.folderDeleteBusy=false;const position=historyPosition.current;window.history.go(position.parents[position.parents.length-1]-position.index);setSelected(null);setRegion(next.r);setDate(next.d);setFolderDelete(false);setRemarksDirty(false);await refresh(null,true);toast.success('폴더와 포함된 자료를 삭제했습니다.');
+    }catch(e){toast.error(e instanceof Error?e.message:'삭제하지 못했습니다. 다시 시도해 주세요.');await refresh(selected,true);}finally{setFolderDeleteBusy(false);}
+  }
 
 
   return <div className="app-shell">
@@ -75,8 +114,9 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
     <div className="workspace-layout">
       <aside className="project-panel"><div className="panel-label">조사 프로젝트</div><button className="date-nav" disabled={uploading} onClick={()=>location(null)}><FolderOpen size={19}/><span>전체 지역</span><span className="nav-count">{regions.length}</span></button><div className="folder-index">{regions.map(r=><div key={r}><button className={region===r?'index-item active':'index-item'} disabled={uploading} onClick={()=>location(r)}><FolderIcon size={16}/><span>{r}</span></button>{region===r&&[...new Set(folders.filter(f=>f.region===r).map(f=>f.date))].sort().reverse().map(d=><button key={d} className={date===d?'index-item active date-index':'index-item date-index'} disabled={uploading} onClick={()=>location(r,d)}><span>{d}</span><span>{folders.filter(f=>f.region===r&&f.date===d).length}</span></button>)}</div>)}</div><button className="secondary-button" disabled={uploading||remarksDirty} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={17}/>일정표 사진 등록</button><div className="sidebar-bottom"><LockKeyhole size={16}/><div><strong>비공개 원본 보관</strong><p>공용 계정으로 PC와 휴대폰에서<br/>함께 사진을 관리합니다.</p></div></div></aside>
       <main className="main-workspace">
+        {region&&<button className="back-button" disabled={uploading||folderDeleteBusy} onClick={()=>selected?location(region,date):date?location(region):location(null)}><ArrowLeft size={16}/>상위 폴더로</button>}
         <nav aria-label="현재 위치" className="breadcrumb"><button disabled={uploading} onClick={()=>location(null)}>전체 지역</button>{region&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region)}>{region}</button></>}{date&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date)}>{date}</button></>}{active&&<><ChevronRight size={14}/><span>{folderLabel(active)}</span></>}</nav>
-        <section className="page-heading"><div><div className="eyebrow">FIELD SURVEY · PHOTO ARCHIVE</div><h1>{active?folderLabel(active):date?`${date} 현장조사`:region||'현장조사 보관함'}<span className="heading-label">{active?'일정 폴더':date?'일정별':region?'날짜별':'지역별'}</span></h1><p>{active?active.address:'일정표 사진을 등록하고 지역 · 날짜 · 번지별로 현장 사진을 모으세요.'}</p></div><div className="heading-actions"><button className="secondary-button" disabled={loading||uploading||remarksDirty} onClick={()=>{setManualImport(true);setImporting(true);}}><Plus size={18}/>일정 직접 추가</button>{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={uploading||remarksDirty} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={18}/>일정표 사진 등록</button><button className="primary-button" onClick={()=>setExportScope(active?.id??null)} disabled={loading||uploading||!!error}><Archive size={18}/>{region?'현재 폴더 다운로드':'전체 다운로드'}</button></div></section>
+        <section className="page-heading"><div><div className="eyebrow">FIELD SURVEY · PHOTO ARCHIVE</div><h1>{active?folderLabel(active):date?`${date} 현장조사`:region||'현장조사 보관함'}<span className="heading-label">{active?'일정 폴더':date?'일정별':region?'날짜별':'지역별'}</span></h1><p>{active?active.address:'일정표 사진을 등록하고 지역 · 날짜 · 번지별로 현장 사진을 모으세요.'}</p></div><div className="heading-actions">{region&&<button className="subtle-button" disabled={loading||uploading||remarksDirty||folderDeleteBusy} onClick={()=>setFolderDelete(true)}><Trash2 size={17}/>폴더 삭제</button>}<button className="secondary-button" disabled={loading||uploading||remarksDirty} onClick={()=>{setManualImport(true);setImporting(true);}}><Plus size={18}/>일정 직접 추가</button>{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={uploading||remarksDirty} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={18}/>일정표 사진 등록</button><button className="primary-button" onClick={()=>setExportScope(active?.id??null)} disabled={loading||uploading||!!error}><Archive size={18}/>{region?'현재 폴더 다운로드':'전체 다운로드'}</button></div></section>
         {error&&<div className="error-banner" role="alert"><TriangleAlert size={19}/><span>{error}</span><button onClick={()=>refresh(selected)}>다시 시도</button></div>}
         {usage&&<section aria-label="보관함 사용 한도">
           <div className="overview-strip">
@@ -107,6 +147,7 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
     <Dialog open={!!preview} onOpenChange={open=>{if(!open)setPreview(null);}}><DialogContent className="photo-dialog"><DialogHeader><DialogTitle>{preview?.filename}</DialogTitle><DialogDescription>원본 사진 · {preview&&formatBytes(preview.size)}</DialogDescription></DialogHeader>{preview&&(preview.content_type==='image/heic'?<p>이 브라우저에서는 HEIC 미리보기를 지원하지 않을 수 있어요. 원본을 내려받아 확인해 주세요.</p>:<img className="large-preview" src={'/api/photos/'+preview.id} alt={preview.filename}/>)}{preview&&<a className="secondary-button" href={'/api/photos/'+preview.id+'?download=1'} download><ArrowDownToLine size={17}/>원본 다운로드</a>}</DialogContent></Dialog>
     <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>{exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+f.count,0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+f.bytes,0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{exportFolder?'건물(호수 또는 지번 주소) / 사진':'조사 날짜 / 건물(호수 또는 지번 주소) / 사진'}</div><p className="export-help">구분건물은 호수만(예: 301호), 일반건물은 지번 주소로 폴더를 만듭니다. 이름이 겹치면 번호를 붙입니다. 빈 폴더도 포함합니다. 같은 이름의 사진은 고유번호를 붙여 모두 보존합니다. 다운로드 완료 여부는 브라우저 다운로드 목록에서 확인해 주세요.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
     <ImportSchedule open={importing} manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d)=>{setImporting(false);location(r,d);void refresh(null);}}/>
+    <AlertDialog open={folderDelete} onOpenChange={open=>{if(!folderDeleteBusy)setFolderDelete(open);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 폴더를 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{active?folderLabel(active):[region,date].filter(Boolean).join(' / ')}<br/>{active?1:scoped.length}개 일정 폴더 · {active?active.count:scoped.reduce((n,f)=>n+f.count,0)}장의 사진이 영구 삭제됩니다. {!active&&'이 범위의 일정표 원본도 함께 삭제됩니다.'} 마지막 건물 폴더를 삭제하면 해당 날짜의 일정표 원본도 함께 삭제됩니다. 삭제한 자료는 복구할 수 없습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={folderDeleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={folderDeleteBusy} onClick={e=>{e.preventDefault();void removeFolder();}}>{folderDeleteBusy?'삭제 중…':'폴더와 자료 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!deleting} onOpenChange={open=>{if(!open&&!deleteBusy)setDeleting(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 사진을 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{deleting?.filename}<br/>보관함에서 원본이 영구 삭제되며 휴대폰과 PC 모두에서 사라집니다. 기기에 있는 사진은 삭제되지 않습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={deleteBusy} onClick={e=>{e.preventDefault();void removePhoto();}}>{deleteBusy?'삭제 중…':'사진 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>;
 }

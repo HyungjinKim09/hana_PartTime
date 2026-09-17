@@ -29,7 +29,7 @@ export async function GET(request:Request){try{
     for(const p of results.filter(p=>p.folder===f.id))addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);
   }
   if(!folder){
-    const sources=await db.prepare('SELECT id,filename,object_key,size,region,survey_date FROM schedule_imports WHERE owner=? AND region IS NOT NULL AND survey_date IS NOT NULL').bind(owner).all<{id:string;filename:string;object_key:string;size:number;region:string;survey_date:string}>();
+    const sources=await db.prepare('SELECT id,filename,object_key,size,region,survey_date FROM schedule_imports WHERE owner=? AND deleted=0 AND region IS NOT NULL AND survey_date IS NOT NULL').bind(owner).all<{id:string;filename:string;object_key:string;size:number;region:string;survey_date:string}>();
     for(const source of sources.results.filter(s=>folders.some(f=>f.region===s.region&&f.date===s.survey_date)))addOriginal(`${source.survey_date}/일정표_${source.id}_${safeFilename(source.filename)}`,source.object_key,source.size);
   }
   const name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';

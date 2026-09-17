@@ -57,6 +57,13 @@
       "when": 1789646529792,
       "tag": "0007_browser_downloads",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789648418484,
+      "tag": "0008_folder_deletion",
+      "breakpoints": true
     }
   ]
 }
