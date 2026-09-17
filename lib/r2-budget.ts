@@ -58,6 +58,25 @@ export function guardedBucket(db:D1Database,bucket:R2Bucket){
       return bucket.get(key);
     },
     delete:remove,
+    async issueDownloads(owner:string,keys:string[]){
+      await reserveOperations(db,'read',keys.length);
+      const now=Date.now();
+      const tickets=keys.map(key=>({token:crypto.randomUUID(),key}));
+      await db.batch([
+        db.prepare('DELETE FROM r2_download_tickets WHERE expires_at<=?').bind(now),
+        db.prepare(`INSERT INTO r2_download_tickets (token,owner,object_key,expires_at)
+          SELECT json_extract(value,'$.token'),?,json_extract(value,'$.key'),? FROM json_each(?)`)
+          .bind(owner,now+3600000,JSON.stringify(tickets)),
+      ]);
+      return tickets.map(t=>t.token);
+    },
+    async redeemDownload(owner:string,token:string){
+      // Delete/RETURNING is atomic: one prepaid R2 GET, even across concurrent devices.
+      const ticket=await db.prepare('DELETE FROM r2_download_tickets WHERE token=? AND owner=? AND expires_at>? RETURNING object_key')
+        .bind(token,owner,Date.now()).first<{object_key:string}>();
+      if(!ticket)return null;
+      return bucket.get(ticket.object_key);
+    },
     async reserveDownloads(keys:string[]){
       await reserveOperations(db,'read',keys.length);
       const remaining=new Map<string,number>();

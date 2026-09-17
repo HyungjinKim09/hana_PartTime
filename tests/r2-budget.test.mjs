@@ -80,6 +80,15 @@ test('R2 budgets enforce concurrent reservations, rolling windows and safe failu
       assert.equal((await budgetUsage(db)).reads,R2_LIMITS.read);
     });
     await t.test('missing accounting tables block R2 access',async()=>{
+      await reset();
+      const tokens=await bucket.issueDownloads('owner',['one','two']);
+      assert.equal((await budgetUsage(db)).reads,2);
+      assert.equal(await bucket.redeemDownload('other-owner',tokens[0]),null,'another owner cannot spend the ticket');
+      const claims=await Promise.all([bucket.redeemDownload('owner',tokens[0]),bucket.redeemDownload('owner',tokens[0])]);
+      assert.equal(claims.filter(Boolean).length,1,'ticket is atomic and single-use');
+      await db.prepare('UPDATE r2_download_tickets SET expires_at=0').run();
+      assert.equal(await bucket.redeemDownload('owner',tokens[1]),null,'expired ticket is rejected');
+      assert.equal((await budgetUsage(db)).reads,2,'redemption does not double charge');
       await db.prepare('DROP TABLE r2_operation_usage').run();
       await assert.rejects(bucket.put('no-accounting',bytes,{}));
       assert.equal(await raw.get('no-accounting'),null);

@@ -1,13 +1,13 @@
 import {env} from 'cloudflare:workers';
 import {headers} from 'next/headers';
+import {COOKIE,digest,lookupSession} from './session-lookup';
+export {COOKIE,digest} from './session-lookup';
 
-export const COOKIE='__Host-fieldnote_session';
 export const SESSION_SECONDS=7*24*60*60;
 type Account={owner:string;username:string;salt:string;password_hash:string;version:number};
 const db=()=>env.DB as D1Database;
 const hex=(bytes:ArrayBuffer)=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 export const randomToken=()=>hex(crypto.getRandomValues(new Uint8Array(32)).buffer);
-export async function digest(value:string){return hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)));}
 export async function passwordHash(password:string,salt:string){
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
   return hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256));
@@ -20,10 +20,7 @@ export async function validAdminKey(key:string){
   return equalHash(await digest(key),await digest(expected));
 }
 export async function sessionUser(){
-  const cookie=(await headers()).get('cookie')||'';
-  const token=cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith(COOKIE+'='))?.slice(COOKIE.length+1);
-  if(!token||!/^[a-f0-9]{64}$/.test(token))return null;
-  return db().prepare('SELECT a.owner,a.username FROM site_sessions s JOIN site_account a ON a.id=1 AND a.version=s.version WHERE s.token_hash=? AND s.expires_at>?').bind(await digest(token),Date.now()).first<{owner:string;username:string}>();
+  return lookupSession(db(),(await headers()).get('cookie')||'');
 }
 export function sessionCookie(token:string,maxAge=SESSION_SECONDS){return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;}
 export async function issueSession(version:number){

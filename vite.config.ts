@@ -12,7 +12,7 @@ export default defineConfig({
     inspectorPort:false,
     config:{
       name:'hanaparttime',
-      main:'vinext/server/fetch-handler',
+      main:'./cloudflare/worker.ts',
       compatibility_date:'2026-05-15',
       compatibility_flags:['nodejs_compat'],
       workers_dev:true,

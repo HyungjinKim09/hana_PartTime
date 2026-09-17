@@ -3,6 +3,8 @@ import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {createZipStream} from '../lib/zip.ts';
+import {exportEntries} from '../lib/export-entries.ts';
 const require=createRequire(import.meta.url);
 const runtime=createRequire(require.resolve('wrangler/package.json'));
 const {Miniflare}=runtime('miniflare');
@@ -13,6 +15,12 @@ const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths
 const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
 const other={cookie:'','oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
 const request=async(path,options={})=>{if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
+const archiveRequest=async(path,options={})=>{
+  const response=await request(path,options);if(!response.ok)return response;
+  assert.match(response.headers.get('content-type'),/application\/json/,'ZIP CPU work runs on the client');
+  const manifest=await response.json();
+  return new Response(createZipStream(exportEntries(manifest,(url)=>request(url,options))),{headers:{'content-type':'application/zip','content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(manifest.name)}`}});
+};
 try{
   const db=await mf.getD1Database('DB');
   const migrationDir=new URL('../drizzle/',import.meta.url);
@@ -51,7 +59,13 @@ try{
   assert.equal((await request('/api/photos/'+created[0].id,{headers:other})).status,401);
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:other})).status,401);
   assert.equal((await request('/api/library',{headers:other})).status,401);
-  const archive=await request('/api/export');assert.equal(archive.status,200);
+  const smallLimit=await request('/api/export?maxBytes=0');assert.equal(smallLimit.status,413);
+  const ticketManifest=await (await request('/api/export')).json();
+  const firstTicket=ticketManifest.entries.find(e=>e.url);
+  assert.equal((await request(firstTicket.url,{headers:other})).status,401);
+  const ticketFile=await request(firstTicket.url);assert.equal(ticketFile.status,200);assert.deepEqual(Buffer.from(await ticketFile.arrayBuffer()),png);
+  assert.equal((await request(firstTicket.url)).status,410,'download token cannot be replayed');
+  const archive=await archiveRequest('/api/export');assert.equal(archive.status,200);
   const archiveBytes=Buffer.from(await archive.arrayBuffer());
   const checked=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; files=[x for x in z.namelist() if not x.endswith("/")]; folders=[x for x in z.namelist() if x.endswith("/")]; assert len(files)==3; assert len(set(files))==3; assert len(folders)==12; assert len([x for x in files if "/사직동 158-22/" in x])==2; assert len(set(z.read(x) for x in files))==1; print(json.dumps({"folders":len(folders),"photos":len(files),"originals_intact":True}))'],{input:archiveBytes,encoding:'utf8'});
   assert.equal(checked.status,0,checked.stderr);console.log('ZIP verification:',checked.stdout.trim());
@@ -63,7 +77,7 @@ try{
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,503);
   assert.equal((await request('/api/photos/'+created[0].id)).status,404,'Tombstoned original is never listed or served');
   const afterPartial=await (await request('/api/library?folder=158-22')).json();assert.equal(afterPartial.photos.length,1);
-  const partialZip=await request('/api/export');assert.ok((await partialZip.arrayBuffer()).byteLength>0,'Export survives failed cleanup');
+  const partialZip=await archiveRequest('/api/export');assert.ok((await partialZip.arrayBuffer()).byteLength>0,'Export survives failed cleanup');
   await db.prepare('DROP TRIGGER fail_photo_delete').run();
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,200);
   assert.equal((await request('/api/photos/'+created[0].id)).status,404);
@@ -78,7 +92,7 @@ try{
   const newFolder=all.find(f=>f.region==='연산2구역'&&f.date==='2026-10-02');assert.ok(newFolder);assert.notEqual(newFolder.id,'연산동 100-2');
   assert.equal((await request('/api/library?folder='+newFolder.id+'&filename=original.png',{method:'POST',body:png})).status,201);
   assert.equal((await request('/api/library?folder='+newFolder.id,{headers:other})).status,401);
-  const scopedArchive=await request('/api/export?region='+encodeURIComponent('연산2구역')+'&date=2026-10-02');assert.equal(scopedArchive.status,200);
+  const scopedArchive=await archiveRequest('/api/export?region='+encodeURIComponent('연산2구역')+'&date=2026-10-02');assert.equal(scopedArchive.status,200);
   const scopedCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; names=z.namelist(); assert all(n.startswith("2026-10-02/") for n in names); assert sum("일정표_" in n for n in names)==2; assert sum(n.endswith("original.png") for n in names)==1; print("PASS: date-first hierarchy, schedule originals, original field photo")'],{input:Buffer.from(await scopedArchive.arrayBuffer()),encoding:'utf8'});assert.equal(scopedCheck.status,0,scopedCheck.stderr);console.log(scopedCheck.stdout.trim());
   const legacyMerge=await (await request('/api/schedules',{method:'POST',body:makeForm('2026-09-17','사직4구역','사직동 158-22')})).json();assert.equal(legacyMerge.added,0);assert.equal(legacyMerge.existing,1);
   assert.equal((await (await request('/api/library?folder=158-22')).json()).photos.length,1,'Existing photos survive imports');
@@ -89,7 +103,7 @@ try{
   assert.equal((await request('/api/schedules',{method:'POST',body:unitForm([units[0],units[0]])})).status,400,'Ambiguous duplicate rows must not disappear');
   const unitFolders=(await (await request('/api/library')).json()).folders.filter(f=>f.region==='호수검증구역');assert.equal(unitFolders.length,11);
   for(const f of unitFolders.slice(0,2))assert.equal((await request('/api/library?folder='+f.id+'&filename=same.png',{method:'POST',body:png})).status,201);
-  const unitZip=await request('/api/export?region='+encodeURIComponent('호수검증구역'));
+  const unitZip=await archiveRequest('/api/export?region='+encodeURIComponent('호수검증구역'));
   const unitCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; folders=[n for n in z.namelist() if n.endswith("/")]; assert len(folders)==len(set(folders))==11; assert set(folders)=={f"2026-09-15/{i}호/" for i in range(201,212)}; photos=[n for n in z.namelist() if n.endswith("same.png")];assert len(photos)==2;assert len(set(n.rsplit("/",1)[0] for n in photos))==2; print("PASS: 11 same-lot units, stable reimport, separate photo directories in ZIP")'],{input:Buffer.from(await unitZip.arrayBuffer()),encoding:'utf8'});assert.equal(unitCheck.status,0,unitCheck.stderr);console.log(unitCheck.stdout.trim());
   const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/현장조사 보관함/);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/report?region=test&date=2026-09-17')).status,401);
@@ -110,21 +124,21 @@ try{
   const addressView=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(addressView.address,'과정로73번길 16-5');assert.equal(addressView.count,1);
   const addressReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(addressReport.text.includes('(과정로73번길 16-5)'));assert.ok(!addressReport.text.includes('과 정 로'));
   console.log('PASS: old OCR-spaced addresses are repaired in folder views and reports without reupload.');
-  const lotZip=await request('/api/export?folder=158-22');
+  const lotZip=await archiveRequest('/api/export?folder=158-22');
   const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("2026-09-17/사직동 158-22/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
   const duplicate=await request('/api/schedules',{method:'POST',body:unitForm([{...units[0],lot:'검증동 999-1'}])});assert.equal(duplicate.status,201);
-  const collisionZip=await request('/api/export?region='+encodeURIComponent('호수검증구역'));
+  const collisionZip=await archiveRequest('/api/export?region='+encodeURIComponent('호수검증구역'));
   const collisionCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;dirs=[n for n in z.namelist() if n.endswith("/")];assert len(dirs)==len(set(dirs))==12;assert "2026-09-15/201호 (2)/" in dirs;print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await collisionZip.arrayBuffer()),encoding:'utf8'});assert.equal(collisionCheck.status,0,collisionCheck.stderr);
   const fullPhotoPaths=JSON.parse(collisionCheck.stdout);
   for(const f of unitFolders.slice(0,2)){
-    const single=await request('/api/export?folder='+f.id);
+    const single=await archiveRequest('/api/export?folder='+f.id);
     assert.ok(!decodeURIComponent(single.headers.get('content-disposition')).includes('검증빌라'));
     const singleCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await single.arrayBuffer()),encoding:'utf8'});assert.equal(singleCheck.status,0,singleCheck.stderr);assert.ok(fullPhotoPaths.includes(JSON.parse(singleCheck.stdout)[0]));
   }
   console.log('PASS: lot-address general folders, unit-only names, collision separation, matching full/single ZIP paths.');
   const otherRegionForm=unitForm([units[0]]);const otherSchedule=JSON.parse(otherRegionForm.get('schedule'));otherSchedule.region='다른검증구역';otherRegionForm.set('schedule',JSON.stringify(otherSchedule));
   assert.equal((await request('/api/schedules',{method:'POST',body:otherRegionForm})).status,201);
-  const dateFirstZip=await request('/api/export');
+  const dateFirstZip=await archiveRequest('/api/export');
   const dateFirstCheck=spawnSync('python',['-c','import sys,io,zipfile,re;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;names=z.namelist();assert all(re.match(r"^\\d{4}-\\d{2}-\\d{2}/",n) for n in names);dirs=[n for n in names if n.endswith("/")];assert len(dirs)==len(set(dirs));assert "2026-09-15/201호 (3)/" in dirs;assert all(n.count("/")==2 for n in dirs);assert len([n for n in names if n.endswith("same.png")])==2;print("PASS: all ZIP paths start at the date; identical units across regions remain separate")'],{input:Buffer.from(await dateFirstZip.arrayBuffer()),encoding:'utf8'});assert.equal(dateFirstCheck.status,0,dateFirstCheck.stderr);console.log(dateFirstCheck.stdout.trim());
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
   const beforeBudget=await (await request('/api/library')).json();
@@ -140,7 +154,7 @@ try{
   const today=new Date().toISOString().slice(0,10);
   await db.prepare("INSERT INTO r2_operation_usage VALUES (?,'read',500000) ON CONFLICT(day,kind) DO UPDATE SET amount=500000").bind(today).run();
   assert.equal((await request('/api/photos/'+created[1].id)).status,429);
-  const deniedZip=await request('/api/export');assert.equal(deniedZip.status,429);assert.match(deniedZip.headers.get('content-type'),/json/,'ZIP rejects before streaming');
+  const deniedZip=await archiveRequest('/api/export');assert.equal(deniedZip.status,429);assert.match(deniedZip.headers.get('content-type'),/json/,'ZIP rejects before streaming');
   assert.equal((await request('/api/library')).status,200,'folder and usage view remains available');
   await db.prepare("INSERT INTO r2_operation_usage VALUES (?,'write',50000) ON CONFLICT(day,kind) DO UPDATE SET amount=50000").bind(today).run();
   assert.equal((await request('/api/library?folder=158-22&filename=blocked.png',{method:'POST',body:png})).status,429);
