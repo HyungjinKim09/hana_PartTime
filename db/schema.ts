@@ -14,6 +14,7 @@ export const siteLoginLimits=sqliteTable('site_login_limits',{
   key:text('key').primaryKey(),attempts:integer('attempts').notNull(),expiresAt:integer('expires_at').notNull(),
 });
 export const photos=sqliteTable('photos',{
+  kind:text('kind').notNull().default('photo'),
   id:text('id').primaryKey(), owner:text('owner').notNull(), folder:text('folder').notNull(),
   filename:text('filename').notNull(), objectKey:text('object_key').notNull(),
   contentType:text('content_type').notNull(), size:integer('size').notNull(), createdAt:text('created_at').notNull(), deleted:integer('deleted').notNull().default(0),
@@ -30,3 +31,6 @@ export const scheduleImports=sqliteTable('schedule_imports',{
   id:text('id').primaryKey(),owner:text('owner').notNull(),filename:text('filename').notNull(),objectKey:text('object_key').notNull(),
   contentType:text('content_type').notNull(),size:integer('size').notNull(),draft:text('draft').notNull(),region:text('region'),date:text('survey_date'),createdAt:text('created_at').notNull(),
 },t=>[index('schedule_imports_owner_day').on(t.owner,t.region,t.date)]);
+
+export const drawingDrafts=sqliteTable('drawing_drafts',{photoId:text('photo_id').primaryKey(),owner:text('owner').notNull(),draft:text('draft').notNull(),revision:integer('revision').notNull().default(1),updatedAt:text('updated_at').notNull()});
+export const drawingAiUsage=sqliteTable('drawing_ai_usage',{day:text('day').primaryKey(),requests:integer('requests').notNull().default(0)});

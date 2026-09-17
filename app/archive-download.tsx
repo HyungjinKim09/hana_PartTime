@@ -22,6 +22,7 @@ export function ArchiveDownload({query,name,onComplete}:{query:URLSearchParams;n
     finally{controller.current=null;setBusy(false);onComplete();}
   }
   return <div>
+    <p>현장에서 찍은 사진만 다운로드합니다. 도면·비지오·일정표 원본은 포함하지 않습니다.</p>
     <button className="primary-button full-width" disabled={busy} onClick={()=>void start()}><ArrowDownToLine size={18}/>{busy?'ZIP 다운로드 중…':completed?'다시 다운로드':'ZIP 다운로드'}</button>
     {busy&&<div role="status"><Progress value={progress.total?100*progress.bytes/progress.total:0}/><p>{progress.total?`${(progress.bytes/1024/1024).toFixed(1)} / ${(progress.total/1024/1024).toFixed(1)} MB`:'다운로드를 준비하고 있습니다.'}</p><p>완료될 때까지 이 화면을 열어 두세요.</p><button className="secondary-button" onClick={()=>controller.current?.abort()}>취소</button></div>}
     {error&&<p className="error-banner" role="alert">{error}</p>}

@@ -59,10 +59,50 @@ try{
   assert.equal((await request('/api/library?folder=158-22&filename=test.jpg',{method:'POST',headers:{origin:'https://evil.test'},body:png})).status,403);
   assert.equal((await request('/api/library?folder=158-22&filename=test.txt',{method:'POST',body:'not a photo'})).status,415);
   assert.equal((await request('/api/library?folder=missing&filename=test.jpg',{method:'POST',body:png})).status,400);
+  const drawingBaseline=(await(await request('/api/library')).json()).usage.storageBytes;
+  assert.equal((await request('/api/library?folder=158-22&kind=unknown',{method:'POST',body:png})).status,400);
+  assert.equal((await request('/api/library?folder=158-22&kind=drawing',{method:'POST',headers:other,body:png})).status,401);
+  assert.equal((await request('/api/library?folder=158-22&kind=drawing',{method:'POST',headers:{origin:'https://evil.test'},body:png})).status,403);
+  const drawingResponse=await request('/api/library?folder=158-22&kind=drawing&filename=plan.png',{method:'POST',body:png});
+  assert.equal(drawingResponse.status,201);const drawing=(await drawingResponse.json()).photo;assert.equal(drawing.kind,'drawing');
+  const drawingDraft={version:1,widthMeters:10.3,heightMeters:6.7,lines:[{id:'l1',a:{x:0,y:0},b:{x:1000,y:0},dashed:false}],labels:[{id:'t1',x:500,y:500,text:'거실'}],warnings:[]};
+  const drawingPath='/api/drawings?photo='+drawing.id;
+  assert.equal((await request(drawingPath,{headers:other})).status,401);
+  assert.equal((await request('/api/drawings?photo=missing')).status,404);
+  assert.equal((await(await request(drawingPath)).json()).revision,0);
+  const saveDrawing=(revision,draft=drawingDraft)=>request(drawingPath,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft,revision})});
+  assert.equal((await saveDrawing(0)).status,200);
+  assert.equal((await saveDrawing(0)).status,409,'Stale editor cannot overwrite saved draft');
+  const reloaded=await(await request(drawingPath)).json();assert.equal(reloaded.revision,1);assert.deepEqual(reloaded.draft,drawingDraft);
+  assert.equal((await saveDrawing(1,{...drawingDraft,widthMeters:-1})).status,400);
+  assert.equal((await request(drawingPath,{method:'PUT',headers:{origin:'https://evil.test','Content-Type':'application/json'},body:JSON.stringify({draft:drawingDraft,revision:1})})).status,403);
+  assert.equal((await request(drawingPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:'data:image/jpeg;base64,YQ=='})})).status,503,'Missing AI binding is explicit, never a fake result');
+  const saves=await Promise.all([saveDrawing(1),saveDrawing(1)]);assert.deepEqual(saves.map(r=>r.status).sort(),[200,409]);
+  const reservations=await Promise.all(Array.from({length:25},()=>db.prepare('INSERT INTO drawing_ai_usage (day,requests) VALUES (?,1) ON CONFLICT(day) DO UPDATE SET requests=requests+1 WHERE requests<20 RETURNING requests').bind('2000-01-01').first()));assert.equal(reservations.filter(Boolean).length,20);
+  const drawings=await(await request('/api/library?folder=158-22')).json();assert.equal(drawings.photos.find(p=>p.id===drawing.id).kind,'drawing');
+  assert.equal(drawings.usage.storageBytes,drawingBaseline+png.length);
+  assert.deepEqual(Buffer.from(await(await request('/api/photos/'+drawing.id)).arrayBuffer()),png);
+  for(const scope of ['?folder=158-22','?date=2026-09-17','?region='+encodeURIComponent('사직4구역'),'']){
+    const manifest=await(await request('/api/export'+scope)).json();
+    assert.ok(manifest.entries.every(e=>!e.name.includes(drawing.id)&&!e.name.endsWith('.vsdx')),'Drawing and Visio are excluded at every ZIP scope');
+    assert.equal(manifest.files,0);assert.equal(manifest.totalBytes,0);assert.ok(manifest.entries.every(e=>e.url===null),'Drawings do not receive download tickets');
+  }
+  const fieldFixture=(await(await request('/api/library?folder=158-22&filename=field-only.png',{method:'POST',body:png})).json()).photo;
+  for(const scope of ['?folder=158-22','?date=2026-09-17','?region='+encodeURIComponent('사직4구역'),'']){
+    const manifest=await(await request('/api/export'+scope)).json();const files=manifest.entries.filter(e=>e.url);
+    assert.equal(manifest.files,1);assert.equal(manifest.totalBytes,png.length);assert.equal(files.length,1);assert.ok(files[0].name.endsWith(fieldFixture.id+'_field-only.png'));
+    assert.deepEqual(Buffer.from(await(await request(files[0].url)).arrayBuffer()),png);
+  }
+  assert.equal((await request('/api/library?id='+fieldFixture.id,{method:'DELETE'})).status,200);
+  assert.equal((await request('/api/library?id='+drawing.id,{method:'DELETE'})).status,200);
+  assert.equal((await request('/api/photos/'+drawing.id)).status,404);
+  assert.equal((await request(drawingPath)).status,404);assert.equal(await db.prepare('SELECT photo_id FROM drawing_drafts WHERE photo_id=?').bind(drawing.id).first(),null,'Photo deletion cleans its editable draft');
+  assert.equal((await(await request('/api/library')).json()).usage.storageBytes,drawingBaseline);
+  console.log('PASS: drawing classification, image originals, scoped ZIP paths, auth, deletion and shared storage budget.');
   const created=[];
   for(const folder of ['158-22','158-22','159-4']){
     const response=await request('/api/library?folder='+folder+'&filename='+encodeURIComponent('현장사진.png'),{method:'POST',headers:{origin:'https://fieldnote.test'},body:png});
-    assert.equal(response.status,201,await response.clone().text());created.push((await response.json()).photo);
+    assert.equal(response.status,201,await response.clone().text());created.push((await response.json()).photo);assert.equal(created.at(-1).kind,'photo');
   }
   const listing=await (await request('/api/library?folder=158-22')).json();assert.equal(listing.photos.length,2);assert.equal(listing.folders.find(f=>f.id==='159-4').count,1);
   const download=await request('/api/photos/'+created[0].id);assert.deepEqual(Buffer.from(await download.arrayBuffer()),png);
@@ -103,7 +143,7 @@ try{
   assert.equal((await request('/api/library?folder='+newFolder.id+'&filename=original.png',{method:'POST',body:png})).status,201);
   assert.equal((await request('/api/library?folder='+newFolder.id,{headers:other})).status,401);
   const scopedArchive=await archiveRequest('/api/export?region='+encodeURIComponent('연산2구역')+'&date=2026-10-02');assert.equal(scopedArchive.status,200);
-  const scopedCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; names=z.namelist(); assert all(n.startswith("2026-10-02/") for n in names); assert sum("일정표_" in n for n in names)==2; assert sum(n.endswith("original.png") for n in names)==1; print("PASS: date-first hierarchy, schedule originals, original field photo")'],{input:Buffer.from(await scopedArchive.arrayBuffer()),encoding:'utf8'});assert.equal(scopedCheck.status,0,scopedCheck.stderr);console.log(scopedCheck.stdout.trim());
+  const scopedCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; names=z.namelist(); assert all(n.startswith("2026-10-02/") for n in names); assert sum("일정표_" in n for n in names)==0; assert sum(n.endswith("original.png") for n in names)==1; print("PASS: date-first hierarchy, field photo only, schedule originals excluded")'],{input:Buffer.from(await scopedArchive.arrayBuffer()),encoding:'utf8'});assert.equal(scopedCheck.status,0,scopedCheck.stderr);console.log(scopedCheck.stdout.trim());
   const legacyMerge=await (await request('/api/schedules',{method:'POST',body:makeForm('2026-09-17','사직4구역','사직동 158-22')})).json();assert.equal(legacyMerge.added,0);assert.equal(legacyMerge.existing,1);
   assert.equal((await (await request('/api/library?folder=158-22')).json()).photos.length,1,'Existing photos survive imports');
   const units=Array.from({length:11},(_,i)=>({lot:'검증동 937-7',unit:`검증빌라${201+i}호`,time:'10:00',name:'대상',phones:[],address:'검증 주소',notes:'',group:1}));
@@ -223,7 +263,7 @@ try{
   await request('/api/schedules',{method:'POST',body:makeForm('2026-12-02',deletionRegion,'삭제동 2')});
   const deletionFolders=(await(await request('/api/library')).json()).folders.filter(f=>f.region===deletionRegion);
   const deletionFolder=deletionFolders.find(f=>f.date==='2026-12-01');
-  const deletionPhoto=(await(await request('/api/library?folder='+deletionFolder.id+'&filename=delete.png',{method:'POST',body:png})).json()).photo;
+  const deletionPhoto=(await(await request('/api/library?folder='+deletionFolder.id+'&kind=drawing&filename=delete.png',{method:'POST',body:png})).json()).photo;
   const deletionPhotoKey=(await db.prepare('SELECT object_key FROM photos WHERE id=?').bind(deletionPhoto.id).first()).object_key;
   await db.prepare("CREATE TRIGGER fail_folder_cleanup BEFORE DELETE ON survey_folders BEGIN SELECT RAISE(FAIL,'cleanup test'); END").run();
   assert.equal((await deleteScope('id='+deletionFolder.id)).status,503);

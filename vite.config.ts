@@ -19,6 +19,7 @@ export default defineConfig({
       ...(deployment.account_id ? {account_id:deployment.account_id}:{}),
       d1_databases:[{binding:'DB',database_name:'hanaparttime-db',database_id:deployment.database_id || '00000000-0000-4000-8000-000000000000',migrations_dir:'./drizzle'}],
       r2_buckets:[{binding:'BUCKET',bucket_name:'hanaparttime-photos'}],
+      ai:{binding:'AI'},
       vars:{SITE_DATA_OWNER:deployment.data_owner || 'hanaparttime'},
       observability:{enabled:true},
     },
