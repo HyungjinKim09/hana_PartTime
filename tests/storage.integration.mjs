@@ -75,7 +75,7 @@ try{
   const unitFolders=(await (await request('/api/library')).json()).folders.filter(f=>f.region==='호수검증구역');assert.equal(unitFolders.length,11);
   for(const f of unitFolders.slice(0,2))assert.equal((await request('/api/library?folder='+f.id+'&filename=same.png',{method:'POST',body:png})).status,201);
   const unitZip=await request('/api/export?region='+encodeURIComponent('호수검증구역'));
-  const unitCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; folders=[n for n in z.namelist() if n.endswith("/")]; assert len(folders)==len(set(folders))==11; assert all("검증빌라" in n for n in folders); photos=[n for n in z.namelist() if n.endswith("same.png")];assert len(photos)==2;assert len(set(n.rsplit("/",1)[0] for n in photos))==2; print("PASS: 11 same-lot units, stable reimport, separate photo directories in ZIP")'],{input:Buffer.from(await unitZip.arrayBuffer()),encoding:'utf8'});assert.equal(unitCheck.status,0,unitCheck.stderr);console.log(unitCheck.stdout.trim());
+  const unitCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; folders=[n for n in z.namelist() if n.endswith("/")]; assert len(folders)==len(set(folders))==11; assert set(folders)=={f"호수검증구역/2026-09-15/{i}호/" for i in range(201,212)}; photos=[n for n in z.namelist() if n.endswith("same.png")];assert len(photos)==2;assert len(set(n.rsplit("/",1)[0] for n in photos))==2; print("PASS: 11 same-lot units, stable reimport, separate photo directories in ZIP")'],{input:Buffer.from(await unitZip.arrayBuffer()),encoding:'utf8'});assert.equal(unitCheck.status,0,unitCheck.stderr);console.log(unitCheck.stdout.trim());
   const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/현장조사 보관함/);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/report?region=test&date=2026-09-17')).status,401);
   const updateRemarks=(id,values={},extra={})=>request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json',...extra},body:JSON.stringify({id,remarks:'보일러는 심야보일러까지 합쳐 4개.\n화분은 별도로 작성함.',buildingDetails:'1동3층',surveyStatus:'완료',...values})});
@@ -95,5 +95,17 @@ try{
   const addressView=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(addressView.address,'과정로73번길 16-5');assert.equal(addressView.count,1);
   const addressReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(addressReport.text.includes('(과정로73번길 16-5)'));assert.ok(!addressReport.text.includes('과 정 로'));
   console.log('PASS: old OCR-spaced addresses are repaired in folder views and reports without reupload.');
+  const lotZip=await request('/api/export?folder=158-22');
+  const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("사직4구역/2026-09-17/사직동 158-22/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
+  const duplicate=await request('/api/schedules',{method:'POST',body:unitForm([{...units[0],lot:'검증동 999-1'}])});assert.equal(duplicate.status,201);
+  const collisionZip=await request('/api/export?region='+encodeURIComponent('호수검증구역'));
+  const collisionCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;dirs=[n for n in z.namelist() if n.endswith("/")];assert len(dirs)==len(set(dirs))==12;assert "호수검증구역/2026-09-15/201호 (2)/" in dirs;print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await collisionZip.arrayBuffer()),encoding:'utf8'});assert.equal(collisionCheck.status,0,collisionCheck.stderr);
+  const fullPhotoPaths=JSON.parse(collisionCheck.stdout);
+  for(const f of unitFolders.slice(0,2)){
+    const single=await request('/api/export?folder='+f.id);
+    assert.ok(!decodeURIComponent(single.headers.get('content-disposition')).includes('검증빌라'));
+    const singleCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await single.arrayBuffer()),encoding:'utf8'});assert.equal(singleCheck.status,0,singleCheck.stderr);assert.ok(fullPhotoPaths.includes(JSON.parse(singleCheck.stdout)[0]));
+  }
+  console.log('PASS: lot-address general folders, unit-only names, collision separation, matching full/single ZIP paths.');
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
 }finally{await mf.dispose();}

@@ -3,6 +3,11 @@ import {normalizeRoadAddress} from './address.js';
 export const SURVEY_STATUSES=['완료','취소','연기','미완료'] as const;
 export function surveyStatus(value?:string){return SURVEY_STATUSES.find(s=>s===value)||'미완료';}
 export function buildingCategory(f:Pick<Folder,'unit'|'address'>){return /[0-9０-９]+(?:[-–][0-9０-９]+)?\s*호(?!선)/u.test([f.unit,f.address].filter(Boolean).join(' '))?'구분건물':'일반건물';}
+export function exportFolderLabel(f:Pick<Folder,'unit'|'address'|'lot'>){
+  if(buildingCategory(f)==='일반건물')return f.lot.trim();
+  const unitNumber=/[0-9０-９]+(?:[-–][0-9０-９]+)?\s*호(?!선)/u;
+  return (f.unit?.match(unitNumber)?.[0]||f.address.match(unitNumber)?.[0])?.replace(/\s/g,'')||f.lot.trim();
+}
 export function dailyReport(region:string,date:string,folders:Folder[]){
   const day=new Date(date+'T00:00:00Z');if(Number.isNaN(day.getTime())||day.toISOString().slice(0,10)!==date)throw new Error('조사 날짜를 확인해 주세요.');
   const items=folders.filter(f=>f.region===region&&f.date===date);
