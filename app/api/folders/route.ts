@@ -1,7 +1,8 @@
 import {z} from 'zod';
 import {identity,storage,json,failure,limitedBody,ApiError} from '@/lib/storage';
 import {findFolder} from '@/lib/folders';
-const update=z.object({id:z.string().min(1).max(150),remarks:z.string().max(10000),buildingDetails:z.string().max(100),surveyStatus:z.enum(['미완료','완료','부분조사','미방문'])}).strict();
+import {SURVEY_STATUSES} from '@/lib/daily-report';
+const update=z.object({id:z.string().min(1).max(150),remarks:z.string().max(10000),buildingDetails:z.string().max(100),surveyStatus:z.enum(SURVEY_STATUSES)}).strict();
 export async function PATCH(request:Request){try{
   const owner=await identity(request);const {db}=storage();
   let data;try{data=update.parse(JSON.parse(new TextDecoder().decode(await limitedBody(request,64000))));}catch{throw new ApiError('비고는 10,000자 이내로 입력하고 조사 상태를 확인해 주세요.');}

@@ -84,10 +84,12 @@ try{
   assert.equal((await updateRemarks('158-22',{surveyStatus:'승인'})).status,400);
   assert.equal((await updateRemarks('158-22')).status,200);
   const stored=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(stored.surveyStatus,'완료');assert.match(stored.remarks,/심야보일러/);assert.equal(stored.buildingDetails,'1동3층');assert.equal(stored.count,1);
-  const report=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.match(report.text,/9\/17\(목\)/);assert.match(report.text,/완료 \/ 1동3층 \/ 보일러/);assert.match(report.text,/특이사항 없음/);assert.equal(report.pending,11);
+  const report=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.match(report.text,/9\/17\(목\)/);assert.match(report.text,/완료\/1동3층\/보일러/);assert.match(report.text,/특이사항 없음/);assert.equal(report.pending,11);
   const foreignReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}),{headers:other})).json();assert.ok(!foreignReport.text.includes('심야보일러'));
   assert.equal((await updateRemarks('158-22',{remarks:'  ',buildingDetails:''})).status,200);
-  const clearedReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(!clearedReport.text.includes('심야보일러'));assert.match(clearedReport.text,/완료 \/ 특이사항 없음/);
+  const clearedReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(!clearedReport.text.includes('심야보일러'));assert.match(clearedReport.text,/완료\/특이사항 없음/);
+  for(const status of ['부분조사','미방문'])assert.equal((await updateRemarks('158-22',{surveyStatus:status})).status,400);
+  for(const status of ['취소','연기','미완료']){assert.equal((await updateRemarks('158-22',{surveyStatus:status,remarks:'현장 부재',buildingDetails:''})).status,200);const current=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(current.text.includes(status+'/현장 부재'));assert.ok(!current.text.includes('해당 없음'));}
   console.log('PASS: persistent remarks/status, owner and origin protection, correct report date and blank remarks fallback.');
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
 }finally{await mf.dispose();}

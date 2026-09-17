@@ -22,9 +22,10 @@ Private personal archive organized by region → survey date → property schedu
 - Photos are hidden with a durable tombstone before deleting their objects; a failed cleanup is safely retryable with the original delete ID.
 
 ## Daily reports
-- Each schedule folder has separate field remarks, building/floor details and an explicit survey status (미완료/완료/부분조사/미방문), stored in D1. Original schedule notes stay separate and are not reported as observations.
+- Each schedule folder has separate field remarks, building/floor details and one of four survey statuses (완료/취소/연기/미완료), stored in D1. Prior unsupported statuses are shown as 미완료 without rewriting the stored record until the user saves a chosen status. Original schedule notes stay separate and are not reported as observations.
 - A region/date report groups unit-number addresses under 구분건물 and addresses without units under 일반건물. Each section starts its numbering at 1. Empty or whitespace-only remarks become 특이사항 없음; existing records default to 미완료 rather than assuming work was completed.
 - Reports include all schedules for the selected region/date and their actual saved statuses. Users can copy or download the generated text; the app does not send it to anyone.
+- Empty building categories are omitted completely. When only one category is present, no category headings appear; mixed days keep both headings. Status and remarks use the requested format, e.g. 취소/현장 부재, with the reason coming from saved remarks.
 - Unsaved remarks remain intact on background refresh; report generation and folder navigation are blocked until changes are saved. Browser close/reload warns about unsaved changes.
 - Unit tests cover date/day, classification, exact remarks and blank fallback. Worker/D1 tests cover save/load, owner isolation, cross-origin rejection, status validation and report output after clearing remarks.
 
