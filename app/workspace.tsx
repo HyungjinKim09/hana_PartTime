@@ -1,5 +1,5 @@
 "use client";
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {lazy,Suspense,useCallback,useEffect,useRef,useState} from 'react';
 import {Plus,Archive,ArrowLeft,ArrowDownToLine,Camera,Check,ChevronRight,Clock,CloudUpload,Folder as FolderIcon,FolderOpen,Image as ImageIcon,LockKeyhole,MapPin,Phone,RefreshCw,TriangleAlert,Trash2,UserRound} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {AlertDialog,AlertDialogContent,AlertDialogHeader,AlertDialogTitle,AlertDialogDescription,AlertDialogFooter,AlertDialogCancel,AlertDialogAction} from '@/components/ui/alert-dialog';
@@ -13,7 +13,8 @@ import {registerPhotoTools} from '@/lib/webmcp';
 import type {BudgetUsage} from '@/lib/r2-budget';
 import {exportFolderLabel} from '@/lib/daily-report';
 import {BatchCamera} from './batch-camera';
-import {DrawingEditor} from './drawing-editor';
+import {createThumbnail} from '@/lib/thumbnail';
+const DrawingEditor=lazy(()=>import('./drawing-editor').then(m=>({default:m.DrawingEditor})));
 import {ArchiveDownload} from './archive-download';
 
 const formatBytes=(n:number)=>n>=1024**3?`${(n/1024**3).toFixed(1)} GB`:n>=1024**2?`${(n/1024**2).toFixed(1)} MB`:`${Math.ceil(n/1024)} KB`;
@@ -37,14 +38,24 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
   const visiblePhotos=photos.filter(photo=>(photo.kind||'photo')===mediaKind);
   const mediaLabel=mediaKind==='drawing'?'도면 사진':'현장 사진';
   const active=folders.find(f=>f.id===selected), total=folders.reduce((n,f)=>n+f.count,0),bytes=folders.reduce((n,f)=>n+f.bytes,0);
-  const refresh=useCallback(async(folder:string|null,quiet=false)=>{
-    const seq=++sequence.current; if(!quiet)setLoading(true);
-    try{const r=await fetch('/api/library'+(folder?'?folder='+encodeURIComponent(folder):''),{cache:'no-store'});const data=await r.json() as {error?:string;folders:Folder[];photos:Photo[];usage:BudgetUsage};if(!r.ok)throw new Error(data.error||'불러오지 못했습니다.');if(seq===sequence.current){setFolders(data.folders);setPhotos(data.photos);setUsage(data.usage);setError('');}}
-    catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'연결을 확인해 주세요.');}
+  type Library={error?:string;folders:Folder[];photos:Photo[];usage:BudgetUsage};
+  const snapshots=useRef(new Map<string,{at:number;data:Library}>()),lastRefresh=useRef(0),pending=useRef<AbortController|null>(null);
+  useEffect(()=>()=>pending.current?.abort(),[]);
+  const refresh=useCallback(async(folder:string|null,quiet=false,reuse=false)=>{
+    const seq=++sequence.current,key=folder||'',cached=reuse?snapshots.current.get(key):undefined;
+    pending.current?.abort();
+    if(!reuse)snapshots.current.clear();
+    if(cached){setFolders(cached.data.folders);setPhotos(cached.data.photos);setUsage(cached.data.usage);setLoading(false);setError('');if(Date.now()-cached.at<60000)return;}
+    if(!quiet&&!cached)setLoading(true);
+    const controller=new AbortController();pending.current=controller;
+    try{const r=await fetch('/api/library'+(folder?'?folder='+encodeURIComponent(folder):''),{cache:'no-store',signal:controller.signal});const data=await r.json() as Library;if(!r.ok){if(r.status===401){snapshots.current.clear();setPhotos([]);setFolders([]);}throw new Error(data.error||'불러오지 못했습니다.');}if(seq===sequence.current){
+      snapshots.current.delete(key);snapshots.current.set(key,{at:Date.now(),data});while(snapshots.current.size>20)snapshots.current.delete(snapshots.current.keys().next().value!);
+      lastRefresh.current=Date.now();setFolders(data.folders);setPhotos(data.photos);setUsage(data.usage);setError('');}}
+    catch(e){if(seq===sequence.current&&!controller.signal.aborted)setError(e instanceof Error?e.message:'연결을 확인해 주세요.');}
     finally{if(seq===sequence.current)setLoading(false);}
   },[]);
-  useEffect(()=>{setMediaKind('photo');setPhotos([]);setFailed([]);void refresh(selected);},[selected,refresh]);
-  useEffect(()=>{const update=()=>{if(!uploading && document.visibilityState==='visible')void refresh(selected,true);};window.addEventListener('focus',update);const timer=setInterval(update,30000);return()=>{window.removeEventListener('focus',update);clearInterval(timer);};},[selected,refresh,uploading]);
+  useEffect(()=>{setMediaKind('photo');setPhotos([]);setFailed([]);void refresh(selected,false,true);},[selected,refresh]);
+  useEffect(()=>{const update=()=>{if(!uploading && document.visibilityState==='visible'&&Date.now()-lastRefresh.current>=30000)void refresh(selected,true);};window.addEventListener('focus',update);const timer=setInterval(update,60000);return()=>{window.removeEventListener('focus',update);clearInterval(timer);};},[selected,refresh,uploading]);
   useEffect(()=>{if(!uploading&&!remarksDirty&&!cameraPending)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[uploading,remarksDirty,cameraPending]);
 
   async function upload(files:File[],fromCamera=false):Promise<File[]>{
@@ -55,7 +66,9 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
       const file=files[i];
       try{if(file.size>20*1024*1024)throw new Error('한 장당 20MB까지 올릴 수 있어요.');
         const r=await fetch(`/api/library?folder=${encodeURIComponent(target)}&filename=${encodeURIComponent(file.name)}&kind=${mediaKind}`,{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream'},body:file});
-        const data=await r.json() as {error?:string};if(!r.ok)throw new Error(data.error||'업로드 실패');saved++;
+        const data=await r.json() as {error?:string;photo:Photo};if(!r.ok)throw new Error(data.error||'업로드 실패');saved++;
+        // Preview failure must never turn a successfully stored original into a retry.
+        try{const thumbnail=await createThumbnail(file);if(thumbnail)await fetch('/api/thumbnails?photo='+encodeURIComponent(data.photo.id),{method:'PUT',headers:{'Content-Type':'image/jpeg'},body:thumbnail,signal:AbortSignal.timeout(10000)});}catch{/* Original remains available if preview creation is unsupported or capped. */}
       }catch(e){failures.push(file);toast.error(`${file.name}: ${e instanceof Error?e.message:'업로드 실패'}`);}
       setProgress({done:i+1,total:files.length});
     }
@@ -149,14 +162,14 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
             {uploading&&<div className="upload-progress"><Progress value={progress.total?progress.done/progress.total*100:0}/><span>{progress.done} / {progress.total}장 처리</span></div>}
           </div>
           {failed.length>0&&<div className="error-banner"><TriangleAlert size={18}/><div><strong>{failed.length}장 저장 실패</strong><p>{failed.map(f=>f.name).join(', ')}</p></div><button disabled={uploading} onClick={()=>upload(failed)}>실패한 사진 다시 올리기</button><button disabled={uploading} onClick={()=>setFailed([])}>재시도 취소</button></div>}
-          {loading?<div className="loading-block" role="status">사진을 불러오는 중…</div>:visiblePhotos.length?<div className="photo-grid">{visiblePhotos.map(photo=><article className="photo-card" key={photo.id}><button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<img src={'/api/photos/'+photo.id} alt={photo.filename} loading="lazy"/>}</button><div className="photo-meta"><strong title={photo.filename}>{photo.filename}</strong><span>{dateText(photo.created_at)} · {formatBytes(photo.size)}</span>{photo.kind==='drawing'&&<button className="secondary-button" disabled={uploading} onClick={()=>setDrawingPhoto(photo)}>자동 도면 만들기 · 비지오</button>}<div className="photo-actions"><a href={'/api/photos/'+photo.id+'?download=1'} download aria-label={photo.filename+' 다운로드'}><ArrowDownToLine size={16}/></a><button disabled={uploading} onClick={()=>setDeleting(photo)} aria-label={photo.filename+' 삭제'}><Trash2 size={16}/></button></div></div></article>)}</div>:!error&&<div className="empty-photos"><ImageIcon size={36} strokeWidth={1.2}/><h3>아직 보관한 {mediaLabel}이 없어요</h3><p>추가한 {mediaLabel}은 이 건물에 원본으로 저장됩니다.</p></div>}
+          {loading?<div className="loading-block" role="status">사진을 불러오는 중…</div>:visiblePhotos.length?<div className="photo-grid">{visiblePhotos.map(photo=><article className="photo-card" key={photo.id}><button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<img src={photo.has_thumbnail?'/api/thumbnails?photo='+photo.id:'/api/photos/'+photo.id} alt={photo.filename} loading="lazy" decoding="async" onError={e=>{const original='/api/photos/'+photo.id;if(!e.currentTarget.src.endsWith(original))e.currentTarget.src=original;}}/>}</button><div className="photo-meta"><strong title={photo.filename}>{photo.filename}</strong><span>{dateText(photo.created_at)} · {formatBytes(photo.size)}</span>{photo.kind==='drawing'&&<button className="secondary-button" disabled={uploading} onClick={()=>setDrawingPhoto(photo)}>자동 도면 만들기 · 비지오</button>}<div className="photo-actions"><a href={'/api/photos/'+photo.id+'?download=1'} download aria-label={photo.filename+' 다운로드'}><ArrowDownToLine size={16}/></a><button disabled={uploading} onClick={()=>setDeleting(photo)} aria-label={photo.filename+' 삭제'}><Trash2 size={16}/></button></div></div></article>)}</div>:!error&&<div className="empty-photos"><ImageIcon size={36} strokeWidth={1.2}/><h3>아직 보관한 {mediaLabel}이 없어요</h3><p>추가한 {mediaLabel}은 이 건물에 원본으로 저장됩니다.</p></div>}
         </>}
         <footer className="workspace-footer"><span><LockKeyhole size={13}/>로그인한 팀원이 함께 사용하는 보관함</span><span>{userName} {isAdmin&&<a href="/account/setup">계정 설정</a>} <button className="subtle-button" disabled={uploading||remarksDirty||cameraPending} onClick={async()=>{try{const r=await fetch('/api/session',{method:'DELETE'});if(!r.ok)throw new Error();window.location.assign('/');}catch{toast.error('로그아웃하지 못했습니다. 다시 시도해 주세요.');}}}>로그아웃</button></span></footer>
       </main>
     </div>
     <Dialog open={!!preview} onOpenChange={open=>{if(!open)setPreview(null);}}><DialogContent className="photo-dialog"><DialogHeader><DialogTitle>{preview?.filename}</DialogTitle><DialogDescription>원본 사진 · {preview&&formatBytes(preview.size)}</DialogDescription></DialogHeader>{preview&&(preview.content_type==='image/heic'?<p>이 브라우저에서는 HEIC 미리보기를 지원하지 않을 수 있어요. 원본을 내려받아 확인해 주세요.</p>:<img className="large-preview" src={'/api/photos/'+preview.id} alt={preview.filename}/>)}{preview&&<a className="secondary-button" href={'/api/photos/'+preview.id+'?download=1'} download><ArrowDownToLine size={17}/>원본 다운로드</a>}</DialogContent></Dialog>
     <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>{exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+f.count,0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+f.bytes,0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{exportFolder?'건물(호수 또는 지번 주소) / 사진':'조사 날짜 / 건물(호수 또는 지번 주소) / 사진'}</div><p className="export-help">구분건물은 호수만(예: 301호), 일반건물은 지번 주소로 폴더를 만듭니다. 이름이 겹치면 번호를 붙입니다. 빈 폴더도 포함합니다. 같은 이름의 사진은 고유번호를 붙여 모두 보존합니다. 다운로드 완료 여부는 브라우저 다운로드 목록에서 확인해 주세요.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
-    {drawingPhoto&&<DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/>}
+    {drawingPhoto&&<Suspense fallback={<div role="status">도면 편집기를 불러오는 중…</div>}><DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/></Suspense>}
     <ImportSchedule open={importing} manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d)=>{setImporting(false);location(r,d);void refresh(null);}}/>
     <AlertDialog open={folderDelete} onOpenChange={open=>{if(!folderDeleteBusy)setFolderDelete(open);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 폴더를 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{active?folderLabel(active):[region,date].filter(Boolean).join(' / ')}<br/>{active?1:scoped.length}개 일정 폴더 · {active?active.count:scoped.reduce((n,f)=>n+f.count,0)}장의 사진이 영구 삭제됩니다. {!active&&'이 범위의 일정표 원본도 함께 삭제됩니다.'} 마지막 건물 폴더를 삭제하면 해당 날짜의 일정표 원본도 함께 삭제됩니다. 삭제한 자료는 복구할 수 없습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={folderDeleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={folderDeleteBusy} onClick={e=>{e.preventDefault();void removeFolder();}}>{folderDeleteBusy?'삭제 중…':'폴더와 자료 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!deleting} onOpenChange={open=>{if(!open&&!deleteBusy)setDeleting(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 사진을 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{deleting?.filename}<br/>보관함에서 원본이 영구 삭제되며 휴대폰과 PC 모두에서 사라집니다. 기기에 있는 사진은 삭제되지 않습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={deleteBusy} onClick={e=>{e.preventDefault();void removePhoto();}}>{deleteBusy?'삭제 중…':'사진 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

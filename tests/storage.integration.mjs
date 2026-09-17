@@ -65,6 +65,24 @@ try{
   assert.equal((await request('/api/library?folder=158-22&kind=drawing',{method:'POST',headers:{origin:'https://evil.test'},body:png})).status,403);
   const drawingResponse=await request('/api/library?folder=158-22&kind=drawing&filename=plan.png',{method:'POST',body:png});
   assert.equal(drawingResponse.status,201);const drawing=(await drawingResponse.json()).photo;assert.equal(drawing.kind,'drawing');
+  // Preview reads must stay authenticated, revalidate without another R2 read,
+  // and never change original bytes or archive contents.
+  const thumbPath='/api/thumbnails?photo='+drawing.id;
+  const thumb=new Uint8Array([255,216,255,224,0,4,0,0,255,217]);
+  assert.equal((await request(thumbPath,{method:'PUT',body:thumb,headers:other})).status,401);
+  assert.equal((await request(thumbPath,{method:'PUT',body:thumb,headers:{origin:'https://evil.test'}})).status,403);
+  assert.equal((await request(thumbPath,{method:'PUT',body:'not jpeg'})).status,415);
+  const savedThumb=await request(thumbPath,{method:'PUT',body:thumb});assert.equal(savedThumb.status,200,await savedThumb.clone().text());
+  const thumbUsage=await (await request('/api/library')).json();
+  assert.equal((await request(thumbPath,{method:'PUT',body:thumb})).status,200);
+  const thumbUsageAgain=await (await request('/api/library')).json();assert.equal(thumbUsageAgain.usage.writes,thumbUsage.usage.writes,'thumbnail retry does not write twice');
+  const preview=await request(thumbPath);assert.equal(preview.status,200);assert.deepEqual(new Uint8Array(await preview.arrayBuffer()),thumb);
+  const usageBefore304=(await(await request('/api/library')).json()).usage.reads;
+  assert.equal((await request(thumbPath,{headers:{'if-none-match':preview.headers.get('etag')}})).status,304);
+  assert.equal((await(await request('/api/library')).json()).usage.reads,usageBefore304,'304 does not consume R2 read budget');
+  assert.equal((await request(thumbPath,{headers:{...other,'if-none-match':preview.headers.get('etag')}})).status,401);
+  const original=await request('/api/photos/'+drawing.id);assert.deepEqual(Buffer.from(await original.arrayBuffer()),png);
+  assert.equal((await request('/api/photos/'+drawing.id,{headers:{'if-none-match':original.headers.get('etag')}})).status,304);
   const drawingDraft={version:1,widthMeters:10.3,heightMeters:6.7,lines:[{id:'l1',a:{x:0,y:0},b:{x:1000,y:0},dashed:false}],labels:[{id:'t1',x:500,y:500,text:'거실'}],warnings:[]};
   const drawingPath='/api/drawings?photo='+drawing.id;
   assert.equal((await request(drawingPath,{headers:other})).status,401);
@@ -79,8 +97,9 @@ try{
   assert.equal((await request(drawingPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:'data:image/jpeg;base64,YQ=='})})).status,503,'Missing AI binding is explicit, never a fake result');
   const saves=await Promise.all([saveDrawing(1),saveDrawing(1)]);assert.deepEqual(saves.map(r=>r.status).sort(),[200,409]);
   const reservations=await Promise.all(Array.from({length:25},()=>db.prepare('INSERT INTO drawing_ai_usage (day,requests) VALUES (?,1) ON CONFLICT(day) DO UPDATE SET requests=requests+1 WHERE requests<20 RETURNING requests').bind('2000-01-01').first()));assert.equal(reservations.filter(Boolean).length,20);
+  const thumbnailKey=(await db.prepare('SELECT thumbnail_key FROM photos WHERE id=?').bind(drawing.id).first()).thumbnail_key;
   const drawings=await(await request('/api/library?folder=158-22')).json();assert.equal(drawings.photos.find(p=>p.id===drawing.id).kind,'drawing');
-  assert.equal(drawings.usage.storageBytes,drawingBaseline+png.length);
+  assert.equal(drawings.usage.storageBytes,drawingBaseline+png.length+thumb.length);
   assert.deepEqual(Buffer.from(await(await request('/api/photos/'+drawing.id)).arrayBuffer()),png);
   for(const scope of ['?folder=158-22','?date=2026-09-17','?region='+encodeURIComponent('사직4구역'),'']){
     const manifest=await(await request('/api/export'+scope)).json();
@@ -88,6 +107,9 @@ try{
     assert.equal(manifest.files,0);assert.equal(manifest.totalBytes,0);assert.ok(manifest.entries.every(e=>e.url===null),'Drawings do not receive download tickets');
   }
   const fieldFixture=(await(await request('/api/library?folder=158-22&filename=field-only.png',{method:'POST',body:png})).json()).photo;
+  const previewRaces=await Promise.all([request('/api/thumbnails?photo='+fieldFixture.id,{method:'PUT',body:thumb}),request('/api/thumbnails?photo='+fieldFixture.id,{method:'PUT',body:thumb})]);
+  assert.ok(previewRaces.every(r=>r.status===200));
+  const previewObjects=await(await mf.getR2Bucket('BUCKET')).list({prefix:'thumbnails/test-owner/'+fieldFixture.id+'/'});assert.equal(previewObjects.objects.length,1,'concurrent previews do not leak R2 objects');
   for(const scope of ['?folder=158-22','?date=2026-09-17','?region='+encodeURIComponent('사직4구역'),'']){
     const manifest=await(await request('/api/export'+scope)).json();const files=manifest.entries.filter(e=>e.url);
     assert.equal(manifest.files,1);assert.equal(manifest.totalBytes,png.length);assert.equal(files.length,1);assert.ok(files[0].name.endsWith(fieldFixture.id+'_field-only.png'));
@@ -96,7 +118,7 @@ try{
   assert.equal((await request('/api/library?id='+fieldFixture.id,{method:'DELETE'})).status,200);
   assert.equal((await request('/api/library?id='+drawing.id,{method:'DELETE'})).status,200);
   assert.equal((await request('/api/photos/'+drawing.id)).status,404);
-  assert.equal((await request(drawingPath)).status,404);assert.equal(await db.prepare('SELECT photo_id FROM drawing_drafts WHERE photo_id=?').bind(drawing.id).first(),null,'Photo deletion cleans its editable draft');
+  assert.equal((await request(drawingPath)).status,404);assert.equal(await (await mf.getR2Bucket('BUCKET')).get(thumbnailKey),null,'photo deletion removes preview');assert.equal(await db.prepare('SELECT photo_id FROM drawing_drafts WHERE photo_id=?').bind(drawing.id).first(),null,'Photo deletion cleans its editable draft');
   assert.equal((await(await request('/api/library')).json()).usage.storageBytes,drawingBaseline);
   console.log('PASS: drawing classification, image originals, scoped ZIP paths, auth, deletion and shared storage budget.');
   const created=[];
@@ -264,6 +286,8 @@ try{
   const deletionFolders=(await(await request('/api/library')).json()).folders.filter(f=>f.region===deletionRegion);
   const deletionFolder=deletionFolders.find(f=>f.date==='2026-12-01');
   const deletionPhoto=(await(await request('/api/library?folder='+deletionFolder.id+'&kind=drawing&filename=delete.png',{method:'POST',body:png})).json()).photo;
+  assert.equal((await request('/api/thumbnails?photo='+deletionPhoto.id,{method:'PUT',body:thumb})).status,200);
+  const deletionThumbKey=(await db.prepare('SELECT thumbnail_key FROM photos WHERE id=?').bind(deletionPhoto.id).first()).thumbnail_key;
   const deletionPhotoKey=(await db.prepare('SELECT object_key FROM photos WHERE id=?').bind(deletionPhoto.id).first()).object_key;
   await db.prepare("CREATE TRIGGER fail_folder_cleanup BEFORE DELETE ON survey_folders BEGIN SELECT RAISE(FAIL,'cleanup test'); END").run();
   assert.equal((await deleteScope('id='+deletionFolder.id)).status,503);
@@ -272,7 +296,7 @@ try{
   await db.prepare('DROP TRIGGER fail_folder_cleanup').run();
   assert.equal((await deleteScope('id='+deletionFolder.id)).status,200);
   assert.equal((await deleteScope('id='+deletionFolder.id)).status,200,'delete retry is idempotent');
-  const rawBucket=await mf.getR2Bucket('BUCKET');assert.equal(await rawBucket.get(deletionPhotoKey),null);
+  const rawBucket=await mf.getR2Bucket('BUCKET');assert.equal(await rawBucket.get(deletionPhotoKey),null);assert.equal(await rawBucket.get(deletionThumbKey),null,'folder deletion removes preview too');
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM schedule_imports WHERE owner=? AND region=?').bind('test-owner',deletionRegion).first()).n,1,'Last building removal also removes its schedule source');
   assert.equal((await deleteScope(new URLSearchParams({region:deletionRegion,date:'2026-12-01'}))).status,200);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM schedule_imports WHERE owner=? AND region=?').bind('test-owner',deletionRegion).first()).n,1);

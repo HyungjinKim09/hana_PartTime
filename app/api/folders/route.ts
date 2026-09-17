@@ -27,10 +27,10 @@ export async function DELETE(request:Request){try{
   ]);
   const folderIds=continuation?.folderIds||marked![0].results.map(row=>row.id),sourceIds=continuation?.sourceIds||marked![2].results.map(row=>row.id);
   const ids=JSON.stringify(folderIds),sources=JSON.stringify(sourceIds);
-  const photoRows=await db.prepare('SELECT id,object_key FROM photos WHERE owner=? AND deleted=1 AND folder IN (SELECT value FROM json_each(?)) LIMIT 10').bind(owner,ids).all<{id:string;object_key:string}>();
-  const sourceRows=await db.prepare('SELECT id,object_key FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?)) LIMIT ?').bind(owner,sources,10-photoRows.results.length).all<{id:string;object_key:string}>();
+  const photoRows=await db.prepare('SELECT id,object_key,thumbnail_key FROM photos WHERE owner=? AND deleted=1 AND folder IN (SELECT value FROM json_each(?)) LIMIT 10').bind(owner,ids).all<{id:string;object_key:string;thumbnail_key?:string|null}>();
+  const sourceRows=await db.prepare('SELECT id,object_key FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?)) LIMIT ?').bind(owner,sources,10-photoRows.results.length).all<{id:string;object_key:string;thumbnail_key?:string|null}>();
   for(const [table,rows] of [['photos',photoRows.results],['schedule_imports',sourceRows.results]] as const){
-    for(const row of rows){await bucket.delete(row.object_key);await db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=? AND deleted=1`).bind(owner,row.id).run();}
+    for(const row of rows){if(row.thumbnail_key)await bucket.delete(row.thumbnail_key);await bucket.delete(row.object_key);await db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=? AND deleted=1`).bind(owner,row.id).run();}
   }
   const pending=await db.prepare('SELECT (SELECT COUNT(*) FROM photos WHERE owner=? AND folder IN (SELECT value FROM json_each(?))) + (SELECT COUNT(*) FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?))) AS count').bind(owner,ids,owner,sources).first<{count:number}>();
   if(pending?.count)return json({deleted:false,continuation:{folderIds,sourceIds},remaining:pending.count});
