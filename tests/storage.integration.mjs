@@ -124,8 +124,19 @@ try{
   const addressView=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(addressView.address,'과정로73번길 16-5');assert.equal(addressView.count,1);
   const addressReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(addressReport.text.includes('(과정로73번길 16-5)'));assert.ok(!addressReport.text.includes('과 정 로'));
   console.log('PASS: old OCR-spaced addresses are repaired in folder views and reports without reupload.');
+  for(let repeat=0;repeat<2;repeat++){
+    const manifest=await (await request('/api/export?folder=158-22')).json();
+    assert.equal(manifest.name,'사직동 158-22.zip');
+    assert.ok(manifest.entries.every(entry=>entry.name.startsWith('사직동 158-22/')));
+    for(const entry of manifest.entries.filter(entry=>entry.url)){
+      const original=await request(entry.url);assert.equal(original.status,200);assert.equal((await original.arrayBuffer()).byteLength,entry.size);
+    }
+  }
+  const dateManifest=await (await request('/api/export?region='+encodeURIComponent('연산2구역')+'&date=2026-10-02')).json();
+  assert.equal(dateManifest.name,'2026-10-02.zip');
+  assert.ok(dateManifest.entries.every(entry=>entry.name.startsWith('2026-10-02/')));
   const lotZip=await archiveRequest('/api/export?folder=158-22');
-  const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("2026-09-17/사직동 158-22/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
+  const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("사직동 158-22/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
   const duplicate=await request('/api/schedules',{method:'POST',body:unitForm([{...units[0],lot:'검증동 999-1'}])});assert.equal(duplicate.status,201);
   const collisionZip=await archiveRequest('/api/export?region='+encodeURIComponent('호수검증구역'));
   const collisionCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;dirs=[n for n in z.namelist() if n.endswith("/")];assert len(dirs)==len(set(dirs))==12;assert "2026-09-15/201호 (2)/" in dirs;print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await collisionZip.arrayBuffer()),encoding:'utf8'});assert.equal(collisionCheck.status,0,collisionCheck.stderr);
@@ -133,7 +144,7 @@ try{
   for(const f of unitFolders.slice(0,2)){
     const single=await archiveRequest('/api/export?folder='+f.id);
     assert.ok(!decodeURIComponent(single.headers.get('content-disposition')).includes('검증빌라'));
-    const singleCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await single.arrayBuffer()),encoding:'utf8'});assert.equal(singleCheck.status,0,singleCheck.stderr);assert.ok(fullPhotoPaths.includes(JSON.parse(singleCheck.stdout)[0]));
+    const singleCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await single.arrayBuffer()),encoding:'utf8'});assert.equal(singleCheck.status,0,singleCheck.stderr);assert.ok(fullPhotoPaths.some(path=>path.split('/').slice(1).join('/')===JSON.parse(singleCheck.stdout)[0]));
   }
   console.log('PASS: lot-address general folders, unit-only names, collision separation, matching full/single ZIP paths.');
   const otherRegionForm=unitForm([units[0]]);const otherSchedule=JSON.parse(otherRegionForm.get('schedule'));otherSchedule.region='다른검증구역';otherRegionForm.set('schedule',JSON.stringify(otherSchedule));
