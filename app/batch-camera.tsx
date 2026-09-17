@@ -3,12 +3,15 @@ import {useEffect,useRef,useState} from 'react';
 import {Camera,CloudUpload,Trash2} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {Progress} from '@/components/ui/progress';
+import {isUltraWideCamera,preferredCamera} from '@/lib/camera-lenses';
 type Capture={id:string;file:File;url:string};
 export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabled:boolean;progress:{done:number;total:number};onUpload:(files:File[])=>Promise<File[]>;onPendingChange:(pending:boolean)=>void}){
   const [shots,setShots]=useState<Capture[]>([]),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const input=useRef<HTMLInputElement>(null),current=useRef<Capture[]>([]),uploadLock=useRef(false);
   const video=useRef<HTMLVideoElement>(null),stream=useRef<MediaStream|null>(null),generation=useRef(0),captureLock=useRef(false);
   const [camera,setCamera]=useState<'off'|'starting'|'ready'>('off'),[capturing,setCapturing]=useState(false),[cameraError,setCameraError]=useState('');
+  const [lenses,setLenses]=useState<MediaDeviceInfo[]>([]),[lensId,setLensId]=useState('');
+  const rememberedLens=useRef('');
   function stopCamera(){
     generation.current++;
     stream.current?.getTracks().forEach(track=>track.stop());stream.current=null;
@@ -20,14 +23,36 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     document.addEventListener('visibilitychange',hide);
     return ()=>{document.removeEventListener('visibilitychange',hide);generation.current++;stream.current?.getTracks().forEach(track=>track.stop());};
   },[]);
-  async function startCamera(){
+  async function startCamera(deviceId?:string){
     stopCamera();setOpen(true);setCameraError('');
     if(!navigator.mediaDevices?.getUserMedia){setCameraError('이 브라우저에서는 연속 촬영을 지원하지 않습니다. 기본 카메라를 이용해 주세요.');return;}
     const request=++generation.current;setCamera('starting');
     try{
-      const media=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:2560},height:{ideal:1920}}});
+      const constraints=(id?:string):MediaStreamConstraints=>({audio:false,video:{...(id?{deviceId:{exact:id}}:{facingMode:{ideal:'environment'}}),width:{ideal:2560},height:{ideal:1920}}});
+      let media=await navigator.mediaDevices.getUserMedia(constraints(deviceId));
       if(request!==generation.current){media.getTracks().forEach(track=>track.stop());return;}
       stream.current=media;
+      // Device labels become available after permission. Enumeration failure
+      // must not prevent ordinary capture on browsers that restrict this API.
+      const devices=await navigator.mediaDevices.enumerateDevices().then(items=>items.filter(item=>item.kind==='videoinput'&&item.deviceId)).catch(()=>[] as MediaDeviceInfo[]);
+      if(request!==generation.current)return;
+      setLenses(devices);
+      const preferred=deviceId||preferredCamera(devices,rememberedLens.current);
+      if(preferred&&preferred!==media.getVideoTracks()[0]?.getSettings().deviceId){
+        media.getTracks().forEach(track=>track.stop());
+        try{media=await navigator.mediaDevices.getUserMedia(constraints(preferred));}
+        catch{
+          if(request!==generation.current)return;
+          rememberedLens.current='';
+          setCameraError('선택한 렌즈를 열 수 없어 기본 후면 카메라로 돌아왔습니다. 기본 카메라 앱에서 0.6배를 선택할 수도 있습니다.');
+          media=await navigator.mediaDevices.getUserMedia(constraints());
+        }
+        if(request!==generation.current){media.getTracks().forEach(track=>track.stop());return;}
+        stream.current=media;
+      }
+      const selectedId=media.getVideoTracks()[0]?.getSettings().deviceId||'';
+      setLensId(selectedId);
+      if(deviceId&&selectedId===deviceId)rememberedLens.current=deviceId;
       const element=video.current;
       if(!element)throw new Error('Camera view unavailable');
       element.srcObject=media;await element.play();
@@ -79,6 +104,11 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     <Dialog open={open} onOpenChange={value=>{if(!busy){if(!value)stopCamera();setOpen(value);}}}><DialogContent className="capture-dialog" onInteractOutside={e=>e.preventDefault()}><DialogHeader><DialogTitle>연속 촬영 · {shots.length}장</DialogTitle><DialogDescription>촬영 버튼을 눌러 여러 장을 담고 한 번에 업로드하세요. 업로드 전 사진은 이 화면에만 임시 보관됩니다.</DialogDescription></DialogHeader>
       <div className="capture-view" hidden={camera==='off'}><video ref={video} autoPlay muted playsInline aria-label="카메라 미리보기"/>{camera==='starting'&&<p role="status">카메라를 켜는 중…</p>}</div>
       {cameraError&&<p role="status" className="error-banner">{cameraError}</p>}
+      {camera==='ready'&&<div className="capture-lenses">
+        {lenses.some(lens=>isUltraWideCamera(lens.label))&&<button className="secondary-button" aria-pressed={lenses.some(lens=>lens.deviceId===lensId&&isUltraWideCamera(lens.label))} disabled={capturing||busy||disabled} onClick={()=>void startCamera(lenses.find(lens=>isUltraWideCamera(lens.label))!.deviceId)}>초광각 · 0.5–0.6배</button>}
+        {lenses.length>1&&<label>카메라 선택 <select aria-label="촬영 렌즈" value={lensId} disabled={capturing||busy||disabled} onChange={event=>void startCamera(event.target.value)}><option value="" disabled>현재 카메라</option>{lenses.map((lens,index)=><option key={lens.deviceId} value={lens.deviceId}>{lens.label||`카메라 ${index+1}`}</option>)}</select></label>}
+        <p>{lenses.some(lens=>isUltraWideCamera(lens.label))?'초광각 배율은 기기에 따라 다릅니다. 미리보기의 촬영 범위를 확인하세요.':'초광각을 자동으로 찾지 못했습니다. 카메라 목록에서 넓게 보이는 렌즈를 선택하거나 기본 카메라에서 0.6배로 촬영하세요.'}</p>
+      </div>}
       <div className="capture-camera-controls">
         {camera==='ready'?<><button className="primary-button capture-shutter" disabled={capturing||busy||disabled} onClick={()=>void capture()}><Camera size={24}/>{capturing?'사진 담는 중…':'사진 촬영'}</button><button className="subtle-button" onClick={stopCamera}>카메라 끄기</button></>:<button className="secondary-button" disabled={camera==='starting'||busy||disabled} onClick={()=>void startCamera()}>연속 촬영 켜기</button>}
         <span role="status" aria-live="polite">{shots.length}장 담김</span>

@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {isUltraWideCamera, preferredCamera} from '../lib/camera-lenses.ts';
+const device=(deviceId,label)=>({deviceId,label});
+assert.equal(isUltraWideCamera('Back Ultra Wide Camera'),true);
+assert.equal(isUltraWideCamera('후면 초광각 카메라'),true);
+assert.equal(isUltraWideCamera('Back camera 0.6x'),true);
+assert.equal(isUltraWideCamera('Back Wide Camera'),false);
+assert.equal(isUltraWideCamera('Front Ultra Wide Camera'),false);
+assert.equal(isUltraWideCamera('camera 2'),false);
+const cameras=[device('main','Back Wide Camera'),device('ultra','Back Ultra Wide Camera'),device('front','Front Camera')];
+assert.equal(preferredCamera(cameras,''),'ultra');
+assert.equal(preferredCamera(cameras,'main'),'main');
+assert.equal(preferredCamera(cameras,'missing'),'ultra');
+assert.equal(preferredCamera([device('unknown','camera 2')],''),'');
+console.log('PASS: ultrawide detection, no generic-wide/front guess, remembered selection, stale device fallback');
