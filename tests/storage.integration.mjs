@@ -25,8 +25,18 @@ try{
   const db=await mf.getD1Database('DB');
   const migrationDir=new URL('../drizzle/',import.meta.url);
   for(const filename of (await readdir(migrationDir)).filter(n=>n.endsWith('.sql')).sort()){
+    if(filename==='0009_additional_schedules.sql'){
+      for(const [id,lot] of [['11111111-1111-4111-8111-111111111111','기존수기'],['22222222-2222-4222-8222-222222222222','기존사진'],['seed-id','기본일정']])await db.prepare("INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index) VALUES ('migration-fixture',?,'검증','2026-09-17',?,'','','','[]','','',1,0)").bind(id,lot).run();
+      await db.prepare("INSERT INTO schedule_imports (id,owner,filename,object_key,content_type,size,draft,region,survey_date,created_at) VALUES ('migration-source','migration-fixture','source','source','image/png',0,?,'검증','2026-09-17','now')").bind(JSON.stringify({folders:[{lot:'기존사진',unit:''}]})).run();
+    }
     const sql=await readFile(new URL(filename,migrationDir),'utf8');
     for(const statement of sql.split('--> statement-breakpoint'))await db.prepare(statement.trim()).run();
+    if(filename==='0009_additional_schedules.sql'){
+      const migrated=await db.prepare("SELECT lot,manual_added FROM survey_folders WHERE owner='migration-fixture' ORDER BY lot").all();
+      assert.equal(migrated.results.find(f=>f.lot==='기존수기').manual_added,1);assert.equal(migrated.results.find(f=>f.lot==='기존사진').manual_added,0);assert.equal(migrated.results.find(f=>f.lot==='기본일정').manual_added,0);
+      await db.prepare("DELETE FROM survey_folders WHERE owner='migration-fixture'").run();await db.prepare("DELETE FROM schedule_imports WHERE owner='migration-fixture'").run();
+    }
+
   }
   for(const path of ['/api/library','/api/export','/api/photos/not-owned'])assert.equal((await mf.dispatchFetch('https://fieldnote.test'+path)).status,401,'Anonymous route '+path);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{method:'POST',body:'x'})).status,401);
@@ -152,7 +162,7 @@ try{
   const dateFirstZip=await archiveRequest('/api/export');
   const dateFirstCheck=spawnSync('python',['-c','import sys,io,zipfile,re;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;names=z.namelist();assert all(re.match(r"^\\d{4}-\\d{2}-\\d{2}/",n) for n in names);dirs=[n for n in names if n.endswith("/")];assert len(dirs)==len(set(dirs));assert "2026-09-15/201호 (3)/" in dirs;assert all(n.count("/")==2 for n in dirs);assert len([n for n in names if n.endswith("same.png")])==2;print("PASS: all ZIP paths start at the date; identical units across regions remain separate")'],{input:Buffer.from(await dateFirstZip.arrayBuffer()),encoding:'utf8'});assert.equal(dateFirstCheck.status,0,dateFirstCheck.stderr);console.log(dateFirstCheck.stdout.trim());
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
-  const manualDraft={region:'사직4구역',date:'2026-09-17',folders:[{lot:'수기동 10-1',unit:'301호',time:'14:30',name:'수기 대상',phones:['010-1234-5678'],address:'수기 주소',notes:'추가 방문',group:1}],warnings:[]};
+  const manualDraft={region:'사직4구역',date:'2026-09-17',folders:[{lot:'수기동 10-1',unit:'만주골든빌 B동 201호',time:'14:30',name:'수기 대상',phones:['010-1234-5678'],address:'수기 주소',notes:'추가 방문',group:1}],warnings:[]};
   const manual=(draft=manualDraft,extra={})=>authRequest('/api/schedules',draft,extra);
   assert.equal((await manual(manualDraft,other)).status,401);
   assert.equal((await manual(manualDraft,{origin:'https://evil.test'})).status,403);
@@ -163,6 +173,11 @@ try{
   assert.equal((await(await manual()).json()).existing,1,'Repeated manual save does not duplicate schedules');
   const manualAfter=await(await request('/api/library')).json();assert.deepEqual(manualAfter.usage,manualUsage,'Manual entry does not use R2 storage or operations');
   const manualFolder=manualAfter.folders.find(f=>f.lot==='수기동 10-1');assert.equal(manualFolder.time,'14:30');assert.equal(manualFolder.notes,'추가 방문');assert.deepEqual(manualFolder.phones,['010-1234-5678']);
+  assert.equal(manualFolder.manualAdded,true);assert.equal(manualFolder.unitDisplay,'만주골든빌 B동 201호');
+  const extraReport=await(await request('/api/report?'+new URLSearchParams({region:manualDraft.region,date:manualDraft.date}))).json();
+  assert.match(extraReport.text,/추가일정\n\n1\. 수기동 10-1\(만주골든빌 B동 201호\) - 미완료 \/ 특이사항 없음/);
+  const normalDuplicate=await manual({...manualDraft,region:newFolder.region,date:newFolder.date,folders:[{...manualDraft.folders[0],lot:newFolder.lot,unit:newFolder.unit||''}]});assert.equal((await normalDuplicate.json()).existing,1);
+  assert.equal((await(await request('/api/library')).json()).folders.find(f=>f.id===newFolder.id).manualAdded,false,'Manual resubmission never relabels an existing imported schedule');
   const appended=await manual({...manualDraft,folders:[{...manualDraft.folders[0],unit:'302호'}]});assert.equal((await appended.json()).added,1,'Append another unit to an existing date');
   assert.equal((await(await manual({...manualDraft,date:'2026-10-20'})).json()).added,1,'Manual entry creates a new date');
   const preserved=await(await request('/api/library?folder=158-22')).json();assert.equal(preserved.photos.length,1);assert.deepEqual(preserved.folders.find(f=>f.id==='158-22'),manualOriginal.folders.find(f=>f.id==='158-22'));assert.deepEqual(preserved.photos,manualOriginal.photos);

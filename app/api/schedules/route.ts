@@ -25,7 +25,7 @@ export async function POST(request:Request){
     if(original&&type)await bucket.put(key,original,{httpMetadata:{contentType:type}});
     let added=0;
     try{
-      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0));
+      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning,manual_added,unit_display) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0,manual?1:0,manual?String((input as {folders:{unit?:string}[]}).folders[index]?.unit||'').normalize('NFC').trim().replace(/\s+/g,' '):f.unit));
       if(file)statements.push(db.prepare('INSERT INTO schedule_imports (id,owner,filename,object_key,content_type,size,draft,region,survey_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(id,owner,safeFilename(file.name),key,type,file.size,JSON.stringify(draft),draft.region,draft.date,createdAt));
       const results=await db.batch(statements);
       added=results.slice(0,unique.length).reduce((n,r)=>n+r.meta.changes,0);

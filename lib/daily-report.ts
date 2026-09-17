@@ -12,7 +12,7 @@ export function dailyReport(region:string,date:string,folders:Folder[]){
   const day=new Date(date+'T00:00:00Z');if(Number.isNaN(day.getTime())||day.toISOString().slice(0,10)!==date)throw new Error('조사 날짜를 확인해 주세요.');
   const items=folders.filter(f=>f.region===region&&f.date===date);
   const lines=[`${day.getUTCMonth()+1}/${day.getUTCDate()}(${'일월화수목금토'[day.getUTCDay()]}) ${region} 현장조사 일일보고`,''];
-  const groups=['일반건물','구분건물'].map(category=>({category,rows:items.filter(f=>buildingCategory(f)===category)})).filter(g=>g.rows.length>0);
+  const groups=['일반건물','구분건물'].map(category=>({category,rows:items.filter(f=>!f.manualAdded&&buildingCategory(f)===category)})).filter(g=>g.rows.length>0);
   for(const {category,rows} of groups){
     if(groups.length>1)lines.push(category);
     rows.forEach((f,i)=>{
@@ -20,6 +20,14 @@ export function dailyReport(region:string,date:string,folders:Folder[]){
       const heading=`${i+1}.${f.lot}${place?`(${place})`:''}`;
       const detail=f.buildingDetails?.trim();
       lines.push(`${heading} - ${surveyStatus(f.surveyStatus)}/${detail?detail+'/':''}${f.remarks?.trim()||'특이사항 없음'}`);
+    });lines.push('');
+  }
+  const additional=items.filter(f=>f.manualAdded);
+  if(additional.length){
+    lines.push('추가일정','');
+    additional.forEach((f,i)=>{
+      const place=f.unitDisplay||f.unit||normalizeRoadAddress(f.address),detail=f.buildingDetails?.trim();
+      lines.push(`${i+1}. ${f.lot}${place?`(${place})`:''} - ${surveyStatus(f.surveyStatus)} / ${detail?detail+' / ':''}${f.remarks?.trim()||'특이사항 없음'}`);
     });lines.push('');
   }
   lines.push('이상입니다.');return lines.join('\n');

@@ -20,7 +20,7 @@ export const photos=sqliteTable('photos',{
 }, table=>[index('photos_owner_folder_created').on(table.owner,table.folder,table.createdAt)]);
 export const folderSeedState=sqliteTable('folder_seed_state',{owner:text('owner').primaryKey()});
 export const surveyFolders=sqliteTable('survey_folders',{
-  deleting:integer('deleting').notNull().default(0),owner:text('owner').notNull(),id:text('id').notNull(),region:text('region').notNull(),date:text('survey_date').notNull(),lot:text('lot').notNull(),unit:text('unit').notNull().default(''),
+  manualAdded:integer('manual_added').notNull().default(0),unitDisplay:text('unit_display').notNull().default(''),deleting:integer('deleting').notNull().default(0),owner:text('owner').notNull(),id:text('id').notNull(),region:text('region').notNull(),date:text('survey_date').notNull(),lot:text('lot').notNull(),unit:text('unit').notNull().default(''),
   time:text('time').notNull(),name:text('name').notNull(),phones:text('phones').notNull(),address:text('address').notNull(),notes:text('notes').notNull(),
   remarks:text('remarks').notNull().default(''),buildingDetails:text('building_details').notNull().default(''),surveyStatus:text('survey_status').notNull().default('미완료'),
   group:integer('group_index').notNull(),sort:integer('sort_index').notNull(),warning:integer('warning').notNull().default(0),
