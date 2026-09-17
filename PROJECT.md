@@ -22,6 +22,8 @@ Private personal archive organized by region → survey date → property schedu
 - Photos are hidden with a durable tombstone before deleting their objects; a failed cleanup is safely retryable with the original delete ID.
 
 ## Daily reports
+
+- Road-address OCR spacing is normalized on recognition, import, folder read and report generation. Isolated road-name fragments and building-number hyphen spacing are repaired while preserving administrative prefixes and separate floor/unit numbers. Existing raw stored addresses are retained; their displayed/report form is repaired without requiring reupload. Free-form remarks and apartment unit identities are not rewritten.
 - Each schedule folder has separate field remarks, building/floor details and one of four survey statuses (완료/취소/연기/미완료), stored in D1. Prior unsupported statuses are shown as 미완료 without rewriting the stored record until the user saves a chosen status. Original schedule notes stay separate and are not reported as observations.
 - A region/date report groups unit-number addresses under 구분건물 and addresses without units under 일반건물. Each section starts its numbering at 1. Empty or whitespace-only remarks become 특이사항 없음; existing records default to 미완료 rather than assuming work was completed.
 - Reports include all schedules for the selected region/date and their actual saved statuses. Users can copy or download the generated text; the app does not send it to anyone.

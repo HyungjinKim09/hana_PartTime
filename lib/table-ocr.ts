@@ -1,5 +1,6 @@
 import type {Worker,ImageLike} from 'tesseract.js';
 import type {ScheduleDraft} from './types';
+import {normalizeRoadAddress} from './address.js';
 export type Rect={left:number;top:number;width:number;height:number};
 export type ScanImage={width:number;height:number;pixels:Uint8Array|Uint8ClampedArray;crop:(r:Rect)=>Promise<ImageLike>};
 export async function readScheduleHeader(worker:Worker,image:ScanImage,bottom:number,parse:(text:string)=>ScheduleDraft){
@@ -52,7 +53,7 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
     const phoneText=(await cell(3)).replace(/\s+/g,'');
     const phones=phoneText.match(/0\d{1,2}-\d{3,4}-\d{4}/g)||[];
     const time=(await cell(4)).replace(/\s+/g,'').replace(/[〜～]/g,'~');
-    const address=(await cell(5)).replace(/\s+/g,' ').trim();
+    const address=normalizeRoadAddress(await cell(5));
     const notes=(await cell(6)).replace(/\s+/g,' ').trim();
     const unit=/\d\s*호/.test(address)?address.replace(/\s+/g,''):'';
     if(/[A-Za-z]/.test(address)&&unit)warnings.push(`일정 ${i+1}: 영문이 섞인 건물·동 이름을 원본과 확인해 주세요. (${address})`);

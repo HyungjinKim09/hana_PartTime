@@ -91,5 +91,9 @@ try{
   for(const status of ['부분조사','미방문'])assert.equal((await updateRemarks('158-22',{surveyStatus:status})).status,400);
   for(const status of ['취소','연기','미완료']){assert.equal((await updateRemarks('158-22',{surveyStatus:status,remarks:'현장 부재',buildingDetails:''})).status,200);const current=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(current.text.includes(status+'/현장 부재'));assert.ok(!current.text.includes('해당 없음'));}
   console.log('PASS: persistent remarks/status, owner and origin protection, correct report date and blank remarks fallback.');
+  await db.prepare('UPDATE survey_folders SET address=? WHERE owner=? AND id=?').bind('과 정 로 73 번 길 16 - 5','test-owner','158-22').run();
+  const addressView=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(addressView.address,'과정로73번길 16-5');assert.equal(addressView.count,1);
+  const addressReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(addressReport.text.includes('(과정로73번길 16-5)'));assert.ok(!addressReport.text.includes('과 정 로'));
+  console.log('PASS: old OCR-spaced addresses are repaired in folder views and reports without reupload.');
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
 }finally{await mf.dispose();}
