@@ -10,7 +10,7 @@ const paths=(await readdir(root,{recursive:true})).filter(p=>p.endsWith('.js')||
 const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],cf:false});
 const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
 const other={'oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
-const request=(path,options={})=>mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});
+const request=async(path,options={})=>{if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
 try{
   const db=await mf.getD1Database('DB');
   const migrationDir=new URL('../drizzle/',import.meta.url);
@@ -52,6 +52,21 @@ try{
   await db.prepare('DROP TRIGGER fail_photo_delete').run();
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,200);
   assert.equal((await request('/api/photos/'+created[0].id)).status,404);
-  const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/9월 17일 현장조사/);
+  const makeForm=(date='2026-10-02',region='연산2구역',lot='연산동 100-2')=>{const form=new FormData();form.set('photo',new Blob([png],{type:'image/png'}),'일정표.png');form.set('schedule',JSON.stringify({region,date,folders:[{lot,time:'10:00',name:'대상',phones:[],address:'주소',notes:'메모',group:1}]}));return form;};
+  assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/schedules',{method:'POST',body:makeForm()})).status,401);
+  assert.equal((await request('/api/schedules',{method:'POST',headers:{origin:'https://evil.test'},body:makeForm()})).status,403);
+  assert.equal((await request('/api/schedules',{method:'POST',body:makeForm('2026-02-30')})).status,400);
+  const imported=await request('/api/schedules',{method:'POST',body:makeForm()});assert.equal(imported.status,201,await imported.clone().text());assert.equal((await imported.json()).added,1);
+  const repeat=await (await request('/api/schedules',{method:'POST',body:makeForm()})).json();assert.equal(repeat.added,0);assert.equal(repeat.existing,1);
+  assert.equal((await (await request('/api/schedules',{method:'POST',body:makeForm('2026-10-03')})).json()).added,1);
+  const all=(await (await request('/api/library')).json()).folders;assert.equal(all.length,14);
+  const newFolder=all.find(f=>f.region==='연산2구역'&&f.date==='2026-10-02');assert.ok(newFolder);assert.notEqual(newFolder.id,'연산동 100-2');
+  assert.equal((await request('/api/library?folder='+newFolder.id+'&filename=original.png',{method:'POST',body:png})).status,201);
+  assert.equal((await request('/api/library?folder='+newFolder.id,{headers:other})).status,404);
+  const scopedArchive=await request('/api/export?region='+encodeURIComponent('연산2구역')+'&date=2026-10-02');assert.equal(scopedArchive.status,200);
+  const scopedCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; names=z.namelist(); assert all(n.startswith("연산2구역/2026-10-02/") for n in names); assert sum("일정표_" in n for n in names)==2; assert sum(n.endswith("original.png") for n in names)==1; print("PASS: region/date hierarchy, schedule originals, original field photo")'],{input:Buffer.from(await scopedArchive.arrayBuffer()),encoding:'utf8'});assert.equal(scopedCheck.status,0,scopedCheck.stderr);console.log(scopedCheck.stdout.trim());
+  const legacyMerge=await (await request('/api/schedules',{method:'POST',body:makeForm('2026-09-17','사직4구역','사직동 158-22')})).json();assert.equal(legacyMerge.added,0);assert.equal(legacyMerge.existing,1);
+  assert.equal((await (await request('/api/library?folder=158-22')).json()).photos.length,1,'Existing photos survive imports');
+  const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/현장조사 보관함/);
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
 }finally{await mf.dispose();}

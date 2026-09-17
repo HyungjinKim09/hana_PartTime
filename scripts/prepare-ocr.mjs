@@ -1,0 +1,12 @@
+import {createRequire} from 'node:module';
+import {mkdir,copyFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+const require=createRequire(import.meta.url);
+const target=new URL('../public/ocr/',import.meta.url);
+await mkdir(target,{recursive:true});
+await copyFile(require.resolve('tesseract.js/dist/worker.min.js'),new URL('worker.min.js',target));
+const tessRequire=createRequire(require.resolve('tesseract.js'));
+const core=dirname(tessRequire.resolve('tesseract.js-core/package.json'));
+for(const filename of ['tesseract-core-lstm.wasm.js','tesseract-core-lstm.wasm'])await copyFile(join(core,filename),new URL(filename,target));
+for(const lang of ['eng','kor'])await copyFile(join(require('@tesseract.js-data/'+lang).langPath,lang+'.traineddata.gz'),new URL(lang+'.traineddata.gz',target));
+console.log('Self-hosted OCR assets ready.');

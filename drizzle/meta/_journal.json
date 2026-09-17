@@ -15,6 +15,13 @@
       "when": 1789629647564,
       "tag": "0001_curious_oracle",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789635060638,
+      "tag": "0002_steady_fantastic_four",
+      "breakpoints": true
     }
   ]
 }
