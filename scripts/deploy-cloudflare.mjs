@@ -24,6 +24,8 @@ run('node_modules/typescript/bin/tsc',['--noEmit']);
 run('tests/storage.integration.mjs');
 const built=JSON.parse(await readFile('dist/server/wrangler.json','utf8'));
 if(built.account_id!==target.account_id || built.d1_databases?.[0]?.database_id!==target.database_id || built.name!=='hanaparttime')throw new Error('빌드 대상 계정 검증 실패. 배포를 중단했습니다.');
+built.d1_databases[0].migrations_dir='../../drizzle';
+await writeFile('dist/server/wrangler.json',JSON.stringify(built,null,2));
 if(process.argv.includes('--check')){
   run(wrangler,['deploy','--config','dist/server/wrangler.json','--dry-run']);
   console.log('로컬 배포 검증 완료. 원격 배포는 수행하지 않았습니다.');
