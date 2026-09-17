@@ -1,0 +1,35 @@
+import {schedule} from '@/lib/schedule';
+import {ApiError,failure,identity,json,storage,limitedBody,imageType} from '@/lib/storage';
+import {safeFilename} from '@/lib/zip';
+export const dynamic='force-dynamic';
+export async function GET(request:Request){try{
+  const owner=await identity();const {db}=storage();
+  const folder=new URL(request.url).searchParams.get('folder');
+  if(folder && !schedule.some(f=>f.id===folder)) throw new ApiError('폴더를 찾을 수 없습니다.',404);
+  const counts=await db.prepare('SELECT folder, COUNT(*) AS count, COALESCE(SUM(size),0) AS bytes FROM photos WHERE owner=? AND deleted=0 GROUP BY folder').bind(owner).all<{folder:string;count:number;bytes:number}>();
+  const photos=folder ? (await db.prepare('SELECT id,folder,filename,content_type,size,created_at FROM photos WHERE owner=? AND folder=? AND deleted=0 ORDER BY created_at DESC,id DESC').bind(owner,folder).all()).results:[];
+  return json({folders:schedule.map(f=>({...f,count:counts.results.find(c=>c.folder===f.id)?.count??0,bytes:counts.results.find(c=>c.folder===f.id)?.bytes??0})),photos});
+}catch(e){return failure(e);}}
+export async function POST(request:Request){try{
+  const owner=await identity(request);const {db,bucket}=storage();const url=new URL(request.url);
+  const folder=url.searchParams.get('folder');
+  if(!folder || !schedule.some(f=>f.id===folder)) throw new ApiError('사진을 넣을 번지 폴더를 선택해 주세요.');
+  const filename=safeFilename(url.searchParams.get('filename')||'photo.jpg');
+  const bytes=await limitedBody(request,20*1024*1024);const type=imageType(bytes);
+  const id=crypto.randomUUID(),key=`photos/${owner}/${id}`,created=new Date().toISOString();
+  await bucket.put(key,bytes,{httpMetadata:{contentType:type}});
+  try { await db.prepare('INSERT INTO photos (id,owner,folder,filename,object_key,content_type,size,created_at) VALUES (?,?,?,?,?,?,?,?)').bind(id,owner,folder,filename,key,type,bytes.length,created).run(); }
+  catch(e){await bucket.delete(key).catch(()=>{});throw e;}
+  return json({photo:{id,folder,filename,content_type:type,size:bytes.length,created_at:created}},201);
+}catch(e){return failure(e);}}
+export async function DELETE(request:Request){try{
+  const owner=await identity(request);const {db,bucket}=storage();const id=new URL(request.url).searchParams.get('id');
+  const photo=await db.prepare('SELECT object_key FROM photos WHERE id=? AND owner=?').bind(id||'',owner).first<{object_key:string}>();
+  if(!photo) throw new ApiError('사진을 찾을 수 없습니다.',404);
+  // Hide metadata durably first: a failed later cleanup cannot break the gallery or ZIP.
+  // A retained tombstone allows the same DELETE request to safely retry cleanup.
+  await db.prepare('UPDATE photos SET deleted=1 WHERE id=? AND owner=?').bind(id,owner).run();
+  await bucket.delete(photo.object_key);
+  await db.prepare('DELETE FROM photos WHERE id=? AND owner=?').bind(id,owner).run();
+  return json({deleted:true});
+}catch(e){return failure(e);}}

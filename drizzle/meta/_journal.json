@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789629263520,
+      "tag": "0000_free_redwing",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789629647564,
+      "tag": "0001_curious_oracle",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile,readdir} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
+const require=createRequire(import.meta.url);
+const runtime=createRequire(require.resolve('wrangler/package.json'));
+const {Miniflare}=runtime('miniflare');
+const root=new URL('../dist/server/',import.meta.url).pathname;
+const paths=(await readdir(root,{recursive:true})).filter(p=>p.endsWith('.js')||p.endsWith('.mjs'));
+const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],cf:false});
+const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
+const other={'oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
+const request=(path,options={})=>mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});
+try{
+  const db=await mf.getD1Database('DB');
+  const migrationDir=new URL('../drizzle/',import.meta.url);
+  for(const filename of (await readdir(migrationDir)).filter(n=>n.endsWith('.sql')).sort()){
+    const sql=await readFile(new URL(filename,migrationDir),'utf8');
+    for(const statement of sql.split('--> statement-breakpoint'))await db.prepare(statement.trim()).run();
+  }
+  for(const path of ['/api/library','/api/export','/api/photos/not-owned'])assert.equal((await mf.dispatchFetch('https://fieldnote.test'+path)).status,401,'Anonymous route '+path);
+  assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{method:'POST',body:'x'})).status,401);
+  const initial=await (await request('/api/library')).json();
+  assert.equal(initial.folders.length,12);assert.equal(initial.folders.reduce((n,f)=>n+f.count,0),0);
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64');
+  assert.equal((await request('/api/library?folder=158-22&filename=test.jpg',{method:'POST',headers:{origin:'https://evil.test'},body:png})).status,403);
+  assert.equal((await request('/api/library?folder=158-22&filename=test.txt',{method:'POST',body:'not a photo'})).status,415);
+  assert.equal((await request('/api/library?folder=missing&filename=test.jpg',{method:'POST',body:png})).status,400);
+  const created=[];
+  for(const folder of ['158-22','158-22','159-4']){
+    const response=await request('/api/library?folder='+folder+'&filename='+encodeURIComponent('현장사진.png'),{method:'POST',headers:{origin:'https://fieldnote.test'},body:png});
+    assert.equal(response.status,201,await response.clone().text());created.push((await response.json()).photo);
+  }
+  const listing=await (await request('/api/library?folder=158-22')).json();assert.equal(listing.photos.length,2);assert.equal(listing.folders.find(f=>f.id==='159-4').count,1);
+  const download=await request('/api/photos/'+created[0].id);assert.deepEqual(Buffer.from(await download.arrayBuffer()),png);
+  assert.equal((await request('/api/photos/'+created[0].id,{headers:other})).status,404);
+  assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:other})).status,404);
+  const otherListing=await (await request('/api/library',{headers:other})).json();assert.equal(otherListing.folders.reduce((n,f)=>n+f.count,0),0);
+  const archive=await request('/api/export');assert.equal(archive.status,200);
+  const archiveBytes=Buffer.from(await archive.arrayBuffer());
+  const checked=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; files=[x for x in z.namelist() if not x.endswith("/")]; folders=[x for x in z.namelist() if x.endswith("/")]; assert len(files)==3; assert len(set(files))==3; assert len(folders)==12; assert len([x for x in files if "/사직동 158-22/" in x])==2; assert len(set(z.read(x) for x in files))==1; print(json.dumps({"folders":len(folders),"photos":len(files),"originals_intact":True}))'],{input:archiveBytes,encoding:'utf8'});
+  assert.equal(checked.status,0,checked.stderr);console.log('ZIP verification:',checked.stdout.trim());
+  await db.prepare("CREATE TRIGGER fail_photo_update BEFORE UPDATE ON photos BEGIN SELECT RAISE(FAIL, 'injected metadata failure'); END").run();
+  assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,503,'Metadata failure must not delete the original');
+  assert.equal((await request('/api/photos/'+created[0].id)).status,200,'Original remains when metadata mutation fails');
+  await db.prepare('DROP TRIGGER fail_photo_update').run();
+  await db.prepare("CREATE TRIGGER fail_photo_delete BEFORE DELETE ON photos BEGIN SELECT RAISE(FAIL, 'injected cleanup failure'); END").run();
+  assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,503);
+  assert.equal((await request('/api/photos/'+created[0].id)).status,404,'Tombstoned original is never listed or served');
+  const afterPartial=await (await request('/api/library?folder=158-22')).json();assert.equal(afterPartial.photos.length,1);
+  const partialZip=await request('/api/export');assert.ok((await partialZip.arrayBuffer()).byteLength>0,'Export survives failed cleanup');
+  await db.prepare('DROP TRIGGER fail_photo_delete').run();
+  assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,200);
+  assert.equal((await request('/api/photos/'+created[0].id)).status,404);
+  const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/9월 17일 현장조사/);
+  console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
+}finally{await mf.dispose();}
