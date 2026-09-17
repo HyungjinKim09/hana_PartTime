@@ -21,7 +21,14 @@ Private personal archive organized by region → survey date → property schedu
 - Uploads are sequential, limited to 20 MB per file, and signature-checked for JPEG, PNG, GIF, WEBP and HEIC/HEIF. HEIC downloads work but browser preview is not guaranteed.
 - Photos are hidden with a durable tombstone before deleting their objects; a failed cleanup is safely retryable with the original delete ID.
 
-## Download
+## Daily reports
+- Each schedule folder has separate field remarks, building/floor details and an explicit survey status (미완료/완료/부분조사/미방문), stored in D1. Original schedule notes stay separate and are not reported as observations.
+- A region/date report groups unit-number addresses under 구분건물 and addresses without units under 일반건물. Each section starts its numbering at 1. Empty or whitespace-only remarks become 특이사항 없음; existing records default to 미완료 rather than assuming work was completed.
+- Reports include all schedules for the selected region/date and their actual saved statuses. Users can copy or download the generated text; the app does not send it to anyone.
+- Unsaved remarks remain intact on background refresh; report generation and folder navigation are blocked until changes are saved. Browser close/reload warns about unsaved changes.
+- Unit tests cover date/day, classification, exact remarks and blank fallback. Worker/D1 tests cover save/load, owner isolation, cross-origin rejection, status validation and report output after clearing remarks.
+
+## Photo downloads
 Streaming ZIP64 uses the path `<region>/<survey-date>/<lot>/<unique-id>_<filename>`. Root, region, date and individual folder downloads are supported. Root/region/date exports also include uploaded schedule originals at the date level.
 Includes empty property folders. Duplicate filenames cannot overwrite each other. Original bytes are not resized or recompressed. Missing files or size mismatches abort rather than silently omit originals. A concurrent deletion can abort an active export; retry after changes finish.
 

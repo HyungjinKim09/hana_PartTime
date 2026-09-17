@@ -77,5 +77,17 @@ try{
   const unitZip=await request('/api/export?region='+encodeURIComponent('호수검증구역'));
   const unitCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; folders=[n for n in z.namelist() if n.endswith("/")]; assert len(folders)==len(set(folders))==11; assert all("검증빌라" in n for n in folders); photos=[n for n in z.namelist() if n.endswith("same.png")];assert len(photos)==2;assert len(set(n.rsplit("/",1)[0] for n in photos))==2; print("PASS: 11 same-lot units, stable reimport, separate photo directories in ZIP")'],{input:Buffer.from(await unitZip.arrayBuffer()),encoding:'utf8'});assert.equal(unitCheck.status,0,unitCheck.stderr);console.log(unitCheck.stdout.trim());
   const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/현장조사 보관함/);
+  assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/report?region=test&date=2026-09-17')).status,401);
+  const updateRemarks=(id,values={},extra={})=>request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json',...extra},body:JSON.stringify({id,remarks:'보일러는 심야보일러까지 합쳐 4개.\n화분은 별도로 작성함.',buildingDetails:'1동3층',surveyStatus:'완료',...values})});
+  assert.equal((await updateRemarks('158-22',{}, {origin:'https://evil.test'})).status,403);
+  assert.equal((await updateRemarks(unitFolders[0].id,{},other)).status,404);
+  assert.equal((await updateRemarks('158-22',{surveyStatus:'승인'})).status,400);
+  assert.equal((await updateRemarks('158-22')).status,200);
+  const stored=(await (await request('/api/library?folder=158-22')).json()).folders.find(f=>f.id==='158-22');assert.equal(stored.surveyStatus,'완료');assert.match(stored.remarks,/심야보일러/);assert.equal(stored.buildingDetails,'1동3층');assert.equal(stored.count,1);
+  const report=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.match(report.text,/9\/17\(목\)/);assert.match(report.text,/완료 \/ 1동3층 \/ 보일러/);assert.match(report.text,/특이사항 없음/);assert.equal(report.pending,11);
+  const foreignReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}),{headers:other})).json();assert.ok(!foreignReport.text.includes('심야보일러'));
+  assert.equal((await updateRemarks('158-22',{remarks:'  ',buildingDetails:''})).status,200);
+  const clearedReport=await (await request('/api/report?'+new URLSearchParams({region:'사직4구역',date:'2026-09-17'}))).json();assert.ok(!clearedReport.text.includes('심야보일러'));assert.match(clearedReport.text,/완료 \/ 특이사항 없음/);
+  console.log('PASS: persistent remarks/status, owner and origin protection, correct report date and blank remarks fallback.');
   console.log('PASS: auth, 12 folders, persisted uploads, same-name originals, two-user isolation, original retrieval, ZIP64, deletion, authenticated SSR.');
 }finally{await mf.dispose();}
