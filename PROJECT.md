@@ -32,7 +32,7 @@ Private personal archive organized by region → survey date → property schedu
 - Unit tests cover date/day, classification, exact remarks and blank fallback. Worker/D1 tests cover save/load, owner isolation, cross-origin rejection, status validation and report output after clearing remarks.
 
 ## Photo downloads
-Streaming ZIP64 uses the path `<region>/<survey-date>/<unit-number-or-lot-address>/<unique-id>_<filename>`. General buildings use the lot address, never the road address. Unit buildings use only the unit number (e.g. 301호), without the building name. Sanitized duplicate directory names receive a numeric suffix, resolved before scope filtering so single-folder and full exports agree. Root, region, date and individual folder downloads are supported. Root/region/date exports also include uploaded schedule originals at the date level.
+Streaming ZIP64 uses the path `<survey-date>/<unit-number-or-lot-address>/<unique-id>_<filename>`. General buildings use the lot address, never the road address. Unit buildings use only the unit number (e.g. 301호), without the building name. There is no region directory in the archive. Sanitized duplicate directory names across all regions on the same date receive a numeric suffix, resolved before scope filtering so single-folder and full exports agree. Root, region, date and individual folder downloads are supported. Root/region/date exports also include uploaded schedule originals at the date level.
 Includes empty property folders. Duplicate filenames cannot overwrite each other. Original bytes are not resized or recompressed. Missing files or size mismatches abort rather than silently omit originals. A concurrent deletion can abort an active export; retry after changes finish.
 
 ## Verification
