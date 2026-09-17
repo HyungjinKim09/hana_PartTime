@@ -1,0 +1,5 @@
+{
+  "account_id": "YOUR_CLOUDFLARE_ACCOUNT_ID",
+  "database_id": "YOUR_HANAPARTTIME_D1_DATABASE_ID",
+  "data_owner": "hanaparttime"
+}

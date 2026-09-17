@@ -1,6 +1,7 @@
 declare namespace Cloudflare {
   interface Env {
-    SITE_OWNER_EMAIL?: string;
+    ADMIN_SETUP_KEY?: string;
+    SITE_DATA_OWNER?: string;
     DB?: D1Database;
     BUCKET?: R2Bucket;
   }

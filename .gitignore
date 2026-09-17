@@ -45,3 +45,6 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+cloudflare/deployment.json
+.migration-data/
+.deploy-secrets/

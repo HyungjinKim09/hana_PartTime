@@ -1,6 +1,5 @@
 import {env} from 'cloudflare:workers';
 import {headers} from 'next/headers';
-import {getChatGPTUser} from '@/app/chatgpt-auth';
 
 export const COOKIE='__Host-fieldnote_session';
 export const SESSION_SECONDS=7*24*60*60;
@@ -15,10 +14,10 @@ export async function passwordHash(password:string,salt:string){
 }
 export function equalHash(a:string,b:string){let diff=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return diff===0;}
 export async function getAccount(){return db().prepare('SELECT owner,username,salt,password_hash,version FROM site_account WHERE id=1').first<Account>();}
-export async function setupOwner(){
-  const email=(env as unknown as {SITE_OWNER_EMAIL?:string}).SITE_OWNER_EMAIL;
-  if(!email)return null;
-  const user=await getChatGPTUser();return user?.email.toLowerCase()===email.toLowerCase()?user:null;
+export async function validAdminKey(key:string){
+  const expected=env.ADMIN_SETUP_KEY;
+  if(!expected || expected.length<32 || key.length<32 || key.length>256)return false;
+  return equalHash(await digest(key),await digest(expected));
 }
 export async function sessionUser(){
   const cookie=(await headers()).get('cookie')||'';
@@ -35,9 +34,9 @@ export async function revokeSession(request:Request){
   const token=(request.headers.get('cookie')||'').split(';').map(s=>s.trim()).find(s=>s.startsWith(COOKIE+'='))?.slice(COOKIE.length+1);
   if(token)await db().prepare('DELETE FROM site_sessions WHERE token_hash=?').bind(await digest(token)).run();
 }
-export async function allowLogin(request:Request){
+export async function allowLogin(request:Request,scope='login'){
   const now=Date.now(),window=Math.floor(now/900000);
-  const key=await digest(`${request.headers.get('cf-connecting-ip')||'unknown'}:${window}`);
+  const key=await digest(`${scope}:${request.headers.get('cf-connecting-ip')||'unknown'}:${window}`);
   const row=await db().prepare('INSERT INTO site_login_limits (key,attempts,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1 RETURNING attempts').bind(key,now+900000).first<{attempts:number}>();
   await db().prepare('DELETE FROM site_login_limits WHERE expires_at<?').bind(now).run();
   return !!row&&row.attempts<=15;

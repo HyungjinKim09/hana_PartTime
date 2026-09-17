@@ -7,11 +7,12 @@ export default function LoginForm({setup=false,username=''}:{setup?:boolean;user
     event.preventDefault();const data=new FormData(event.currentTarget);setError('');
     if(setup&&data.get('password')!==data.get('confirm')){setError('비밀번호 확인이 일치하지 않습니다.');return;}
     setBusy(true);try{
-      const response=await fetch(setup?'/api/account':'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:data.get('username'),password:data.get('password')})});
+      const response=await fetch(setup?'/api/account':'/api/session',{method:'POST',headers:{'Content-Type':'application/json',...(setup?{'X-Admin-Key':String(data.get('adminKey')||'')}: {})},body:JSON.stringify({username:data.get('username'),password:data.get('password')})});
       const result=await response.json() as {error?:string};if(!response.ok)throw new Error(result.error||'로그인하지 못했습니다.');window.location.assign('/');
     }catch(e){setError(e instanceof Error?e.message:'연결을 확인해 주세요.');setBusy(false);}
   }
   return <form className="login-form" onSubmit={submit}>
+    {setup&&<><label htmlFor="adminKey">관리 키</label><Input id="adminKey" name="adminKey" type="password" autoComplete="off" required minLength={32} maxLength={256} disabled={busy}/><small>공용 비밀번호와 다른 관리자 전용 키입니다.</small></>}
     <label htmlFor="username">공용 아이디</label><Input id="username" name="username" defaultValue={username} autoComplete="username" autoCapitalize="none" spellCheck={false} required minLength={3} maxLength={40} pattern="[a-zA-Z0-9_.\-]+" disabled={busy}/>
     {setup&&<small>영문·숫자, 밑줄(_), 점(.), 하이픈(-)으로 3~40자</small>}
     <label htmlFor="password">비밀번호</label><Input id="password" name="password" type="password" autoComplete={setup?'new-password':'current-password'} required minLength={12} maxLength={128} disabled={busy}/>

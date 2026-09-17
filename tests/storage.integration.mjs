@@ -7,7 +7,8 @@ const runtime=createRequire(require.resolve('wrangler/package.json'));
 const {Miniflare}=runtime('miniflare');
 const root=new URL('../dist/server/',import.meta.url).pathname;
 const paths=(await readdir(root,{recursive:true})).filter(p=>p.endsWith('.js')||p.endsWith('.mjs'));
-const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],bindings:{SITE_OWNER_EMAIL:'test@example.test'},cf:false});
+const adminKey='integration-test-only-admin-key-0123456789';
+const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],bindings:{ADMIN_SETUP_KEY:adminKey,SITE_DATA_OWNER:'test-owner'},cf:false});
 const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
 const other={cookie:'','oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
 const request=async(path,options={})=>{if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
@@ -24,7 +25,10 @@ try{
   const credentials={username:'fieldteam',password:'test-password-12345'};
   assert.equal((await authRequest('/api/account',credentials,other)).status,403,'No public registration or unauthorized account reset');
   assert.equal((await authRequest('/api/account',credentials,{origin:'https://evil.test'})).status,403);
-  const setup=await authRequest('/api/account',credentials);assert.equal(setup.status,200,await setup.clone().text());
+  assert.equal((await authRequest('/api/account',credentials)).status,403,'Spoofed ChatGPT owner headers cannot configure standalone account');
+  assert.equal((await authRequest('/api/account',credentials,{'x-admin-key':'incorrect-key-01234567890123456789'})).status,403);
+  assert.equal((await authRequest('/api/account',credentials,{'x-admin-key':adminKey,origin:'https://evil.test'})).status,403,'Admin key does not bypass CSRF');
+  const setup=await authRequest('/api/account',credentials,{'x-admin-key':adminKey});assert.equal(setup.status,200,await setup.clone().text());
   assert.match(setup.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Lax/);
   headers.cookie=setup.headers.get('set-cookie').split(';')[0];
   assert.equal((await db.prepare('SELECT owner FROM site_account').first()).owner,'test-owner','Original owner namespace is preserved');
@@ -133,11 +137,14 @@ try{
   assert.equal((await team('/api/session',{method:'DELETE',headers:{origin:'https://evil.test'}})).status,403);
   assert.equal((await team('/api/session',{method:'DELETE'})).status,200);assert.equal((await team('/api/export')).status,401,'Logout revokes session');
   const newLogin=await login();const oldCookie=newLogin.headers.get('set-cookie').split(';')[0];
-  const reset=await authRequest('/api/account',{...credentials,password:'changed-password-123'});assert.equal(reset.status,200);
+  const reset=await authRequest('/api/account',{...credentials,password:'changed-password-123'},{'x-admin-key':adminKey});assert.equal(reset.status,200);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:oldCookie}})).status,401,'Password reset revokes other devices');
   assert.equal((await login()).status,401);const changed=await login('changed-password-123');assert.equal(changed.status,200);
   await db.prepare('UPDATE site_sessions SET expires_at=0').run();assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:changed.headers.get('set-cookie').split(';')[0]}})).status,401);
   for(let i=0;i<16;i++)await login('bad-password-long');assert.equal((await login()).status,429,'Brute-force throttling');
   const publicPage=await mf.dispatchFetch('https://fieldnote.test/');const publicText=await publicPage.text();assert.match(publicText,/공용 계정/);assert.ok(!publicText.includes('과정로73번길'));assert.ok(!publicText.includes('회원가입'));
+  const adminPage=await mf.dispatchFetch('https://fieldnote.test/account/setup');const adminHtml=await adminPage.text();assert.equal(adminPage.status,200);assert.match(adminHtml,/관리 키/);assert.ok(!adminHtml.includes(adminKey));assert.ok(!adminHtml.includes('signin-with-chatgpt'));
+  for(let i=0;i<16;i++)await authRequest('/api/account',credentials,{'x-admin-key':'incorrect-key-01234567890123456789'});
+  assert.equal((await authRequest('/api/account',credentials,{'x-admin-key':adminKey})).status,429,'Admin-key brute-force throttling');
   console.log('PASS: no signup, owner-only setup/reset, shared site-only login and originals, secure cookies, logout, expiry, CSRF and rate limits.');
 }finally{await mf.dispose();}
