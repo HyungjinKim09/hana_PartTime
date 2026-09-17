@@ -11,7 +11,7 @@ const scan={width,height,pixels:source.data,async crop(r){return sharp(source.da
 const lines=tableLines(scan);assert.ok(lines,'Ruled table detected');
 const worker=await createWorker(['kor','eng'],1,{langPath:new URL('../public/ocr/',import.meta.url).pathname,cacheMethod:'none'},{tessedit_load_sublangs:''});
 try{
- await worker.setParameters({tessedit_pageseg_mode:'6'});
+ await worker.setParameters({tessedit_pageseg_mode:'11',user_defined_dpi:'150'});
  const header=await worker.recognize(await scan.crop({left:0,top:0,width,height:lines.rows[0]-5}));
  const draft=parseScheduleText(header.data.text);
  const result=await readTableRows(worker,scan,lines,()=>{});

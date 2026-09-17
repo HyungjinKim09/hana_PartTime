@@ -14,12 +14,12 @@ export async function POST(request:Request){
     const original=new Uint8Array(await file.arrayBuffer()),type=imageType(original);
     await ensureLegacyFolders(db,owner);
     const id=crypto.randomUUID(),key=`${owner}/schedules/${id}`,createdAt=new Date().toISOString();
-    const unique=[...new Map(draft.folders.map(f=>[f.lot,f])).values()];
+    const unique=draft.folders;
     await bucket.put(key,original,{httpMetadata:{contentType:type}});
     let added=0;
     try{
       const results=await db.batch([
-        ...unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,time,name,phones,address,notes,group_index,sort_index,warning) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot) DO NOTHING').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0)),
+        ...unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0)),
         db.prepare('INSERT INTO schedule_imports (id,owner,filename,object_key,content_type,size,draft,region,survey_date,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(id,owner,safeFilename(file.name),key,type,file.size,JSON.stringify(draft),draft.region,draft.date,createdAt),
       ]);
       added=results.slice(0,-1).reduce((n,r)=>n+r.meta.changes,0);

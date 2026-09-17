@@ -31,14 +31,24 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
   const minimum=Math.max(12,heights[Math.floor(heights.length/2)]*.35);
   const spans=allSpans.filter(r=>r.bottom-r.top>=minimum);
   if(spans.length>100)throw new Error('일정이 100개를 넘습니다. 사진을 나눠 등록해 주세요.');
-  await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM});
+  await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
   for(let i=0;i<spans.length;i++){
     const {top,bottom}=spans[i];
-    const result=await worker.recognize(await image.crop({left:cols[1]+5,top:top+5,width:cols[2]-cols[1]-10,height:bottom-top-10}));
-    const lot=readLotCell(result.data.text);
+    async function cell(column:number){if(column+1>=cols.length)return '';const result=await worker.recognize(await image.crop({left:cols[column]+5,top:top+5,width:cols[column+1]-cols[column]-10,height:bottom-top-10}));return result.data.text.trim();}
+    const lot=readLotCell(await cell(1));
     if(!lot)warnings.push(`일정 ${i+1}의 번지를 읽지 못했습니다. 원본을 확인해 입력해 주세요.`);
-    folders.push({lot,time:'',name:'',phones:[],address:'',notes:'',group:1});
+    const name=(await cell(2)).replace(/\s+/g,'');
+    const phoneText=(await cell(3)).replace(/\s+/g,'');
+    const phones=phoneText.match(/0\d{1,2}-\d{3,4}-\d{4}/g)||[];
+    const time=(await cell(4)).replace(/\s+/g,'').replace(/[〜～]/g,'~');
+    const address=(await cell(5)).replace(/\s+/g,' ').trim();
+    const notes=(await cell(6)).replace(/\s+/g,' ').trim();
+    const unit=/\d\s*호/.test(address)?address.replace(/\s+/g,''):'';
+    if(/[A-Za-z]/.test(address)&&unit)warnings.push(`일정 ${i+1}: 영문이 섞인 건물·동 이름을 원본과 확인해 주세요. (${address})`);
+    folders.push({lot,unit,time,name,phones,address,notes,group:1});
     onProgress(25+(i+1)/spans.length*70);
   }
+  const repeated=new Set(folders.filter((f,i)=>folders.some((other,j)=>i!==j&&other.lot===f.lot)).map(f=>f.lot));
+  for(let i=0;i<folders.length;i++)if(repeated.has(folders[i].lot)&&!folders[i].unit)warnings.push(`일정 ${i+1}: 같은 번지가 여러 번 나옵니다. 건물·호수를 입력해 구분해 주세요.`);
   return {folders,warnings};
 }

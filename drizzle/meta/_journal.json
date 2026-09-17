@@ -22,6 +22,13 @@
       "when": 1789635060638,
       "tag": "0002_steady_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789636856321,
+      "tag": "0003_rapid_mastermind",
+      "breakpoints": true
     }
   ]
 }

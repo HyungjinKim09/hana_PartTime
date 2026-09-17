@@ -5,11 +5,13 @@ Private personal archive organized by region → survey date → property schedu
 
 ## Schedule photo import
 - Tesseract.js runs Korean/English OCR in the browser. All worker, WASM and language assets are self-hosted under public/ocr. No OpenAI key or additional plugin is required.
-- Extracts region, printed survey date and lot-column candidates. User compares and confirms editable fields before submitting. Missing dates are never replaced with the upload date. Time, contact and notes are manually editable; OCR does not claim reliable extraction of these fields.
+- Extracts region, printed survey date and numbered-table fields. User compares and confirms editable fields before submitting. Missing dates are never replaced with the upload date. Names, contacts and notes remain editable and require review.
 - Original schedule and validated metadata are uploaded together. R2 original is stored first; a D1 batch creates folders and source metadata atomically, with object cleanup on failed database writes.
-- Unique owner/region/date/normalized-lot key merges repeated folders. Existing folder details and photos are preserved. A different date or region creates independent folders.
+- Unique owner/region/date/normalized-lot/unit key reuses repeated folders. Same-lot apartments remain separate by building/unit; ambiguous duplicates in one import are rejected, never silently removed. Existing folder details and photos are preserved. The unit migration defaults old rows to an empty unit and retains their IDs.
 - Run `node scripts/prepare-ocr.mjs` after changing OCR dependency versions, and commit the generated public assets. Tesseract's optional donation-message postinstall is intentionally disabled.
 - OCR repair: resize the page before recognition, detect ruled numbered survey tables and read the heading and individual lot cells independently. Keep unreadable rows as blank review entries with warnings; never infer a missing hyphen. Other layouts fall back to whole-page OCR with an explicit incompleteness warning.
+- The heading uses sparse-text segmentation, which fixes the missing region on the supplied Mangmi schedule. Numbered table cells now include name, phone, time, building/address and notes. Mixed Latin/Korean building names receive a review warning. Folders and ZIP paths display building/unit alongside the lot.
+- `node --experimental-strip-types tests/photo-ocr.mjs <local-photo> --mangmi` was run against the supplied 2026-09-15 Mangmi photograph: region/date, all 11 lots, 11 unit numbers and 11 time entries match. Row 5's building text misreads A동 as AT and is explicitly flagged. This is not a claim that all contact/name text is accurate. User photographs are not committed or published as assets.
 - `node --experimental-strip-types tests/table-ocr.mjs` exercises a synthetic Korean ruled table: all 12 rows remain, 11 readable lots are recognized, and one clipped lot is flagged. The user's failing photo was unavailable in scratch for reproduction; no accuracy claim is made for it.
 
 ## Storage and access

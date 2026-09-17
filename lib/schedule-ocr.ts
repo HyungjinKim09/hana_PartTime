@@ -20,7 +20,7 @@ export function parseScheduleText(text:string,words:OcrWord[]=[]):ScheduleDraft{
   if(!folders.length){
     for(const match of text.matchAll(/([가-힣]+동)\s*(\d{1,5})\s*[-–—]\s*(\d{1,4})(?!\d)/g))folders.push({lot:`${match[1]} ${match[2]}-${match[3]}`,time:'',name:'',phones:[],address:'',notes:'',group:1});
   }
-  return {region,date,folders:[...new Map(folders.map(f=>[f.lot,f])).values()],warnings:['인식한 지역·날짜·번지를 원본과 비교해 주세요. 방문 시간, 연락처, 메모는 필요한 경우 직접 입력해 주세요.']};
+  return {region,date,folders,warnings:['인식한 지역·날짜·번지와 건물·호수를 원본과 비교해 주세요.']};
 }
 export async function recognizeSchedule(file:File,onProgress:(value:number)=>void):Promise<ScheduleDraft>{
   const {tableLines,readTableRows}=await import('./table-ocr');
@@ -38,7 +38,7 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
   const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
   try{
     if(lines){
-      onProgress(10);await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM});
+      onProgress(10);await worker.setParameters({tessedit_pageseg_mode:'11' as import('tesseract.js').PSM,user_defined_dpi:'150'});
       const header=await worker.recognize(await scan.crop({left:0,top:0,width:scan.width,height:Math.max(1,lines.rows[0]-5)}));
       const draft=parseScheduleText(header.data.text);
       const table=await readTableRows(worker,scan,lines,onProgress);

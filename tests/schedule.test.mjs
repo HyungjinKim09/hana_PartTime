@@ -29,3 +29,10 @@ test('joins Korean cell words without guessing a missing hyphen',()=>{
  assert.equal(readLotCell('사직동\n1594'),'');
  assert.equal(readLotCell('010-1234-5678'),'');
 });
+test('preserves separate units on the same lot and rejects ambiguous duplicate rows',()=>{
+ const a={...sample.folders[0],lot:'망미동 937-7',unit:'배산 301호'};
+ const b={...a,unit:'배산 202호'};
+ const parsed=validateSchedule({...sample,folders:[a,b]});assert.equal(parsed.folders.length,2);assert.equal(parsed.folders[0].unit,'배산301호');
+ assert.throws(()=>validateSchedule({...sample,folders:[a,{...a,unit:'배산301호'}]}));
+ assert.throws(()=>validateSchedule({...sample,folders:[{...a,unit:''},{...b,unit:''}]}));
+});

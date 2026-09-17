@@ -1,4 +1,5 @@
 import {listFolders} from '@/lib/folders';
+import {folderLabel} from '@/lib/types';
 import {ApiError,failure,identity,storage} from '@/lib/storage';
 import {createZipStream,safeFilename,type ZipEntry} from '@/lib/zip';
 export const dynamic='force-dynamic';
@@ -9,7 +10,7 @@ export async function GET(request:Request){try{
   if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
   const {results}=await db.prepare('SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND deleted=0 ORDER BY created_at,id').bind(owner).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
   const entries:ZipEntry[]=[];
-  for(const f of folders){const path=`${safeFilename(f.region)}/${f.date}/${safeFilename(f.lot)}/`;
+  for(const f of folders){const path=`${safeFilename(f.region)}/${f.date}/${safeFilename(folderLabel(f))}/`;
     entries.push({name:path,size:0,open:async()=>new Blob([]).stream()});
     for(const p of results.filter(p=>p.folder===f.id))entries.push({name:`${path}${p.id}_${safeFilename(p.filename)}`,size:p.size,open:async()=>{const object=await bucket.get(p.object_key);if(!object)throw new Error('Missing original: '+p.id);return object.body;}});
   }
