@@ -1,7 +1,7 @@
 # Fieldnote — 사직4구역 현장 사진
 
 ## Scope
-Private personal archive organized by region → survey date → property schedule. The original 12 properties from 2026-09-17 remain seeded with their original IDs, preserving existing photos. Mobile photo uploads and desktop viewing share durable server state under the signed-in user's ID. The earlier AI floor-plan idea is out of scope.
+Team archive organized by region → survey date → property schedule. The original 12 properties from 2026-09-17 remain seeded with their original IDs, preserving existing photos. Mobile and desktop users log in with one site-owned shared account and use the original owner's durable data namespace. The earlier AI floor-plan idea is out of scope.
 
 ## Schedule photo import
 - Tesseract.js runs Korean/English OCR in the browser. All worker, WASM and language assets are self-hosted under public/ocr. No OpenAI key or additional plugin is required.
@@ -15,8 +15,10 @@ Private personal archive organized by region → survey date → property schedu
 - `node --experimental-strip-types tests/table-ocr.mjs` exercises a synthetic Korean ruled table: all 12 rows remain, 11 readable lots are recognized, and one clipped lot is flagged. The user's failing photo was unavailable in scratch for reproduction; no accuracy claim is made for it.
 
 ## Storage and access
-- Keep Sites owner-only; identity is supplied by the trusted Sites dispatcher. Never deploy this worker on an untrusted directly accessible origin without replacing header authentication.
-- D1 stores ownership, folder and file metadata; R2 stores original bytes. All read, write, delete and export queries enforce the signed-in user ID.
+- The login page is publicly reachable; every data read/write/export requires a site session. There is no public registration. Shared account credentials are created/reset only at `/account/setup`, where trusted Sites ChatGPT headers must match the configured `SITE_OWNER_EMAIL`. The owner sets the password in the browser; no default credential is shipped. Never serve the admin setup on an origin with untrusted identity headers.
+- `SITE_OWNER_EMAIL` is a Sites runtime secret resolved from the verified current owner. Changing it requires reviewing ownership and data continuity. App-owned setup binds the account to the existing platform user ID without moving/deleting original photos or metadata. The shared login does not require ChatGPT; ChatGPT is used only for owner administration/recovery.
+- Passwords use random salts and PBKDF2-SHA256 (100,000 iterations, compatible with Workers). Random 256-bit sessions are stored only as SHA256 hashes in D1; cookies are Secure, HttpOnly, SameSite=Lax and expire in seven days. Logout revokes the session; credential changes invalidate all previous sessions using a version check. Login is limited to 15 attempts per source IP per 15-minute window. Login/setup/logout enforce same-origin requests.
+- D1 stores ownership, folder and file metadata; R2 stores original bytes. All read, write, delete and export queries use the owner namespace resolved from the validated shared session. All team users have the same photo/schedule editing permissions; only the verified site owner can set account credentials.
 - The schedule is server-side source, not a public asset. There is no browser-only authoritative storage.
 - Uploads are sequential, limited to 20 MB per file, and signature-checked for JPEG, PNG, GIF, WEBP and HEIC/HEIF. HEIC downloads work but browser preview is not guaranteed.
 - Photos are hidden with a durable tombstone before deleting their objects; a failed cleanup is safely retryable with the original delete ID.
@@ -45,4 +47,4 @@ Includes empty property folders. Duplicate filenames cannot overwrite each other
 - Supervised browser preview verified the signed-out screen. Authenticated browser UI and WebMCP runtime validation are unavailable without a preview login; production auth was not bypassed for testing. Actual phone/PC UI interaction remains a manual acceptance check.
 
 ## User acceptance
-Sign in with the same ChatGPT account on phone and PC, open a property folder, upload photos, confirm they appear on PC, choose 전체 다운로드 and unzip. Deployment starts with zero photos; synthetic integration fixtures are not deployed.
+The owner first opens `/account/setup`, confirms their original ChatGPT identity if needed, and creates the shared site username/password. Team members then use those credentials on phone and PC without ChatGPT login. Open a property folder, upload photos, confirm they appear on another device, choose 전체 다운로드 and unzip. Existing production photos remain; synthetic integration fixtures and test credentials are never deployed. The storage integration exercises anonymous rejection, owner-only setup/reset, shared session access to original data, logout, expiry, credential rotation and throttling.

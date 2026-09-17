@@ -1,4 +1,13 @@
 import {sqliteTable, text, integer, index, primaryKey, uniqueIndex} from 'drizzle-orm/sqlite-core';
+export const siteAccount=sqliteTable('site_account',{
+  id:integer('id').primaryKey(),owner:text('owner').notNull(),username:text('username').notNull(),salt:text('salt').notNull(),passwordHash:text('password_hash').notNull(),version:integer('version').notNull(),
+});
+export const siteSessions=sqliteTable('site_sessions',{
+  tokenHash:text('token_hash').primaryKey(),version:integer('version').notNull(),expiresAt:integer('expires_at').notNull(),
+});
+export const siteLoginLimits=sqliteTable('site_login_limits',{
+  key:text('key').primaryKey(),attempts:integer('attempts').notNull(),expiresAt:integer('expires_at').notNull(),
+});
 export const photos=sqliteTable('photos',{
   id:text('id').primaryKey(), owner:text('owner').notNull(), folder:text('folder').notNull(),
   filename:text('filename').notNull(), objectKey:text('object_key').notNull(),

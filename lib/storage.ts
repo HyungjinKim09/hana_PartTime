@@ -1,15 +1,15 @@
 import {env} from 'cloudflare:workers';
-import {getChatGPTUser} from '@/app/chatgpt-auth';
+import {sessionUser} from './site-auth';
 export class ApiError extends Error { constructor(message:string,public status=400){super(message);} }
 export async function identity(request?:Request) {
-  const user=await getChatGPTUser();
+  const user=await sessionUser();
   if(!user) throw new ApiError('로그인 후 다시 시도해 주세요.',401);
   if(request && request.method!=='GET') {
     if(request.headers.get('sec-fetch-site')==='cross-site') throw new ApiError('허용되지 않은 요청입니다.',403);
     const origin=request.headers.get('origin');
     if(origin && origin!==new URL(request.url).origin) throw new ApiError('허용되지 않은 요청입니다.',403);
   }
-  return user.userId;
+  return user.owner;
 }
 export function storage(){
   if(!env.DB || !env.BUCKET) throw new ApiError('사진 보관함에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',503);
