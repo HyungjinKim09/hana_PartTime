@@ -9,6 +9,8 @@ Private personal archive organized by region → survey date → property schedu
 - Original schedule and validated metadata are uploaded together. R2 original is stored first; a D1 batch creates folders and source metadata atomically, with object cleanup on failed database writes.
 - Unique owner/region/date/normalized-lot key merges repeated folders. Existing folder details and photos are preserved. A different date or region creates independent folders.
 - Run `node scripts/prepare-ocr.mjs` after changing OCR dependency versions, and commit the generated public assets. Tesseract's optional donation-message postinstall is intentionally disabled.
+- OCR repair: resize the page before recognition, detect ruled numbered survey tables and read the heading and individual lot cells independently. Keep unreadable rows as blank review entries with warnings; never infer a missing hyphen. Other layouts fall back to whole-page OCR with an explicit incompleteness warning.
+- `node --experimental-strip-types tests/table-ocr.mjs` exercises a synthetic Korean ruled table: all 12 rows remain, 11 readable lots are recognized, and one clipped lot is flagged. The user's failing photo was unavailable in scratch for reproduction; no accuracy claim is made for it.
 
 ## Storage and access
 - Keep Sites owner-only; identity is supplied by the trusted Sites dispatcher. Never deploy this worker on an untrusted directly accessible origin without replacing header authentication.

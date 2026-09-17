@@ -23,14 +23,29 @@ export function parseScheduleText(text:string,words:OcrWord[]=[]):ScheduleDraft{
   return {region,date,folders:[...new Map(folders.map(f=>[f.lot,f])).values()],warnings:['인식한 지역·날짜·번지를 원본과 비교해 주세요. 방문 시간, 연락처, 메모는 필요한 경우 직접 입력해 주세요.']};
 }
 export async function recognizeSchedule(file:File,onProgress:(value:number)=>void):Promise<ScheduleDraft>{
+  const {tableLines,readTableRows}=await import('./table-ocr');
+  const bitmap=await createImageBitmap(file);
+  const scale=Math.min(2200/bitmap.width,4000/bitmap.height);
+  const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx){bitmap.close();throw new Error('사진을 열 수 없습니다.');}
+  ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
+  const scan={width:canvas.width,height:canvas.height,pixels:ctx.getImageData(0,0,canvas.width,canvas.height).data,async crop(r:import('./table-ocr').Rect){const c=document.createElement('canvas');c.width=r.width+40;c.height=r.height+40;const out=c.getContext('2d')!;out.fillStyle='white';out.fillRect(0,0,c.width,c.height);out.drawImage(canvas,r.left,r.top,r.width,r.height,20,20,r.width,r.height);return c;}};
+  const lines=tableLines(scan);
   const {createWorker}=await import('tesseract.js');
   // Korean tessdata requests an optional Traditional Chinese sublanguage;
   // limit initialization to the two models bundled with this application.
   const config:Partial<import('tesseract.js').InitOptions>&{tessedit_load_sublangs:string}={tessedit_load_sublangs:''};
-  const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',logger:m=>{if(m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
+  const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
   try{
-    const {data}=await worker.recognize(file,{}, {text:true,blocks:true});
+    if(lines){
+      onProgress(10);await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM});
+      const header=await worker.recognize(await scan.crop({left:0,top:0,width:scan.width,height:Math.max(1,lines.rows[0]-5)}));
+      const draft=parseScheduleText(header.data.text);
+      const table=await readTableRows(worker,scan,lines,onProgress);
+      onProgress(100);return {...draft,folders:table.folders,warnings:table.warnings};
+    }
+    const {data}=await worker.recognize(canvas,{}, {text:true,blocks:true});
     const words=data.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words)))||[];
-    return parseScheduleText(data.text,words);
+    const result=parseScheduleText(data.text,words);result.warnings.unshift('표의 칸을 구분하지 못했습니다. 누락된 일정이 없는지 원본의 행 수와 비교해 주세요.');return result;
   }finally{await worker.terminate();}
 }

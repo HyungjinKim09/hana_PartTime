@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateSchedule} from '../lib/schedule-input.ts';
 import {parseScheduleText} from '../lib/schedule-ocr.ts';
+import {readLotCell} from '../lib/table-ocr.ts';
 const sample={region:' 사직4구역 ',date:'2026-09-18',folders:[{lot:'사직동158 - 22',time:'10:00',name:'연락 대상',phones:[],address:'주소',notes:'',group:1}],warnings:[]};
 test('uses the survey date supplied by the document and normalizes property names',()=>{
  const parsed=validateSchedule(sample);assert.equal(parsed.region,'사직4구역');assert.equal(parsed.date,'2026-09-18');assert.equal(parsed.folders[0].lot,'사직동 158-22');
@@ -22,4 +23,9 @@ test('restricts numeric lots to their table column',()=>{
  const w=(text,x,y)=>({text,bbox:{x0:x,y0:y,x1:x+60,y1:y+20}});
  const result=parseScheduleText('사직4구역\n2026.9.22',[w('번지',100,100),w('사직동',100,180),w('158-22',100,210),w('1267-39',600,210)]);
  assert.deepEqual(result.folders.map(f=>f.lot),['사직동 158-22']);
+});
+test('joins Korean cell words without guessing a missing hyphen',()=>{
+ assert.equal(readLotCell('사 직 동\n158 - 8'),'사직동 158-8');
+ assert.equal(readLotCell('사직동\n1594'),'');
+ assert.equal(readLotCell('010-1234-5678'),'');
 });
