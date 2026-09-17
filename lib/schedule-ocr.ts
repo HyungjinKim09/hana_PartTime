@@ -23,7 +23,7 @@ export function parseScheduleText(text:string,words:OcrWord[]=[]):ScheduleDraft{
   return {region,date,folders,warnings:['인식한 지역·날짜·번지와 건물·호수를 원본과 비교해 주세요.']};
 }
 export async function recognizeSchedule(file:File,onProgress:(value:number)=>void):Promise<ScheduleDraft>{
-  const {tableLines,readTableRows}=await import('./table-ocr');
+  const {tableLines,readTableRows,readScheduleHeader}=await import('./table-ocr');
   const bitmap=await createImageBitmap(file);
   const scale=Math.min(2200/bitmap.width,4000/bitmap.height);
   const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
@@ -38,9 +38,7 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
   const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
   try{
     if(lines){
-      onProgress(10);await worker.setParameters({tessedit_pageseg_mode:'11' as import('tesseract.js').PSM,user_defined_dpi:'150'});
-      const header=await worker.recognize(await scan.crop({left:0,top:0,width:scan.width,height:Math.max(1,lines.rows[0]-5)}));
-      const draft=parseScheduleText(header.data.text);
+      onProgress(10);const draft=await readScheduleHeader(worker,scan,lines.rows[0],parseScheduleText);
       const table=await readTableRows(worker,scan,lines,onProgress);
       onProgress(100);return {...draft,folders:table.folders,warnings:table.warnings};
     }

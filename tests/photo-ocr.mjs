@@ -3,7 +3,7 @@ import {createWorker} from 'tesseract.js';
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
 import {parseScheduleText} from '../lib/schedule-ocr.ts';
-import {tableLines,readTableRows} from '../lib/table-ocr.ts';
+import {tableLines,readTableRows,readScheduleHeader} from '../lib/table-ocr.ts';
 const require=createRequire(import.meta.url),runtime=createRequire(require.resolve('wrangler/package.json'));
 const sharp=createRequire(runtime.resolve('miniflare'))('sharp');
 const source=await sharp(process.argv[2]).resize({width:2200}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
@@ -12,11 +12,8 @@ const scan={width,height,pixels:source.data,async crop(r){return sharp(source.da
 const lines=tableLines(scan);if(!lines)throw new Error('Table not detected');
 const worker=await createWorker(['kor','eng'],1,{langPath:new URL('../public/ocr/',import.meta.url).pathname,cacheMethod:'none'},{tessedit_load_sublangs:''});
 try{
- await worker.setParameters({tessedit_pageseg_mode:'11',user_defined_dpi:'150'});
- const header=await worker.recognize(await scan.crop({left:0,top:0,width,height:lines.rows[0]-5}));
- const draft=parseScheduleText(header.data.text);
+ const draft=await readScheduleHeader(worker,scan,lines.rows[0],parseScheduleText);
  console.log('Header region/date:',draft.region,draft.date);
- if(process.argv.includes('--header')){await worker.setParameters({tessedit_pageseg_mode:'11'});const sparse=await worker.recognize(await scan.crop({left:0,top:0,width,height:lines.rows[0]-5}));console.log('Sparse header:',sparse.data.text);process.exitCode=0;}else{
  const result=await readTableRows(worker,scan,lines,()=>{});
  if(process.argv.includes('--mangmi')){
   assert.equal(draft.region,'망미5구역');assert.equal(draft.date,'2026-09-15');assert.equal(result.folders.length,11);
@@ -28,5 +25,4 @@ try{
   console.log('PASS: supplied Mangmi photograph, region/date, all 11 lots/units/times, distinct identities and ambiguous building-name warning.');
  }
  console.log(JSON.stringify({region:draft.region,date:draft.date,folders:result.folders.map(({lot,unit,time})=>({lot,unit,time})),warnings:result.warnings},null,2));
- }
 }finally{await worker.terminate();}

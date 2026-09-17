@@ -2,6 +2,17 @@ import type {Worker,ImageLike} from 'tesseract.js';
 import type {ScheduleDraft} from './types';
 export type Rect={left:number;top:number;width:number;height:number};
 export type ScanImage={width:number;height:number;pixels:Uint8Array|Uint8ClampedArray;crop:(r:Rect)=>Promise<ImageLike>};
+export async function readScheduleHeader(worker:Worker,image:ScanImage,bottom:number,parse:(text:string)=>ScheduleDraft){
+  const header=await image.crop({left:0,top:0,width:image.width,height:Math.max(1,bottom-5)});
+  await worker.setParameters({tessedit_pageseg_mode:'11' as import('tesseract.js').PSM,user_defined_dpi:'150'});
+  const draft=parse((await worker.recognize(header)).data.text);
+  if(!draft.region||!draft.date){
+    await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM});
+    const second=parse((await worker.recognize(header)).data.text);
+    draft.region=draft.region||second.region;draft.date=draft.date||second.date;
+  }
+  return draft;
+}
 // Find long continuous dark strokes, rather than treating dense text as a rule.
 export function tableLines(image:ScanImage){
   const {width:w,height:h,pixels:p}=image;

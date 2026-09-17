@@ -2,7 +2,7 @@ import {createWorker} from 'tesseract.js';
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
 import {parseScheduleText} from '../lib/schedule-ocr.ts';
-import {tableLines,readTableRows} from '../lib/table-ocr.ts';
+import {tableLines,readTableRows,readScheduleHeader} from '../lib/table-ocr.ts';
 const require=createRequire(import.meta.url),runtime=createRequire(require.resolve('wrangler/package.json'));
 const sharp=createRequire(runtime.resolve('miniflare'))('sharp');
 const source=await sharp(new URL('./fixtures/korean-schedule.png',import.meta.url).pathname).resize({width:2200}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
@@ -11,9 +11,7 @@ const scan={width,height,pixels:source.data,async crop(r){return sharp(source.da
 const lines=tableLines(scan);assert.ok(lines,'Ruled table detected');
 const worker=await createWorker(['kor','eng'],1,{langPath:new URL('../public/ocr/',import.meta.url).pathname,cacheMethod:'none'},{tessedit_load_sublangs:''});
 try{
- await worker.setParameters({tessedit_pageseg_mode:'11',user_defined_dpi:'150'});
- const header=await worker.recognize(await scan.crop({left:0,top:0,width,height:lines.rows[0]-5}));
- const draft=parseScheduleText(header.data.text);
+ const draft=await readScheduleHeader(worker,scan,lines.rows[0],parseScheduleText);
  const result=await readTableRows(worker,scan,lines,()=>{});
  assert.equal(draft.region,'사직4구역');assert.equal(draft.date,'2026-09-21');
  const expected=['158-22','147-85','159-25','158-27','158-23','143-12','158-8','159-4','159-29','159-12','158-59','159-15'].map(n=>'사직동 '+n);
