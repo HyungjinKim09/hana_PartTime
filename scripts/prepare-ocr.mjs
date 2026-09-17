@@ -8,5 +8,5 @@ await copyFile(require.resolve('tesseract.js/dist/worker.min.js'),new URL('worke
 const tessRequire=createRequire(require.resolve('tesseract.js'));
 const core=dirname(tessRequire.resolve('tesseract.js-core/package.json'));
 for(const filename of ['tesseract-core-lstm.wasm.js','tesseract-core-lstm.wasm'])await copyFile(join(core,filename),new URL(filename,target));
-for(const lang of ['eng','kor'])await copyFile(join(require('@tesseract.js-data/'+lang).langPath,lang+'.traineddata.gz'),new URL(lang+'.traineddata.gz',target));
+for(const lang of ['eng','kor'])await copyFile(join(dirname(require('@tesseract.js-data/'+lang).langPath),'4.0.0_best_int',lang+'.traineddata.gz'),new URL(lang+'.traineddata.gz',target));
 console.log('Self-hosted OCR assets ready.');

@@ -36,3 +36,12 @@ test('preserves separate units on the same lot and rejects ambiguous duplicate r
  assert.throws(()=>validateSchedule({...sample,folders:[a,{...a,unit:'배산301호'}]}));
  assert.throws(()=>validateSchedule({...sample,folders:[{...a,unit:''},{...b,unit:''}]}));
 });
+
+test('repairs a misread town suffix only when the document region corroborates it',()=>{
+ assert.equal(readLotCell('사 직 통\n159-10','사직4구역'),'사직동 159-10');
+ assert.equal(readLotCell('사직통\n158-26','사직4구역'),'사직동 158-26');
+ assert.equal(readLotCell('망미동\n937-29','사직4구역'),'망미동 937-29');
+ assert.equal(readLotCell('사직통\n159-10','명장2구역'),'159-10');
+ assert.equal(readLotCell('159-10','사직4구역'),'159-10');
+ assert.equal(readLotCell('사직동\n15910','사직4구역'),'');
+});

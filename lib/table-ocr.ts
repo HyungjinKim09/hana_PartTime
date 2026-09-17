@@ -12,6 +12,20 @@ export async function readScheduleHeader(worker:Worker,image:ScanImage,bottom:nu
     const second=parse((await worker.recognize(header)).data.text);
     draft.region=draft.region||second.region;draft.date=draft.date||second.date;
   }
+  // A separate date line avoids the title/company text distorting segmentation.
+  if(!draft.date||!draft.region){
+    const bands:{top:number;bottom:number}[]=[];
+    for(let y=0;y<bottom-8;y++){
+      let count=0;for(let x=0;x<image.width;x++){const i=(y*image.width+x)*4;if(image.pixels[i]<140&&image.pixels[i+1]<140&&image.pixels[i+2]<140)count++;}
+      if(count>8){const last=bands.at(-1);if(last&&y-last.bottom<8)last.bottom=y;else bands.push({top:y,bottom:y});}
+    }
+    await worker.setParameters({tessedit_pageseg_mode:'7' as import('tesseract.js').PSM});
+    for(const band of bands.filter(b=>b.bottom-b.top>10).slice(-4).reverse()){
+      const line=await image.crop({left:0,top:band.top,width:image.width,height:band.bottom-band.top+1});
+      const retry=parse((await worker.recognize(line)).data.text);draft.date=draft.date||retry.date;draft.region=draft.region||retry.region;
+      if(draft.date&&draft.region)break;
+    }
+  }
   return draft;
 }
 // Find long continuous dark strokes, rather than treating dense text as a rule.
@@ -29,14 +43,19 @@ export function tableLines(image:ScanImage){
   if(cols[1]-cols[0]>(cols[2]-cols[1])*.9)return null;
   return {rows,cols};
 }
-export function readLotCell(text:string){
+export function readLotCell(text:string,region=''){
   const joined=text.normalize('NFKC').replace(/[–—−_]/g,'-').replace(/([가-힣])\s+(?=[가-힣])/g,'$1');
-  const town=joined.match(/([가-힣]+[동리가])/u)?.[1]||'';
+  let town=joined.match(/([가-힣]+[동리가])/u)?.[1]||'';
+  if(!town){
+    const stem=region.replace(/\d*구역$/,'');
+    const suspect=joined.match(/^([가-힣]+)[통등](?=\s*\d)/)?.[1];
+    if(stem&&suspect===stem)town=stem+'동';
+  }
   const numbers=joined.match(/(?<![\d-])(\d{1,5})\s*-\s*(\d{1,4})(?![\d-])/);
   // A missing hyphen is not inferred: keep the row for explicit correction.
   return numbers?`${town?town+' ':''}${numbers[1]}-${numbers[2]}`:'';
 }
-export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNullable<ReturnType<typeof tableLines>>,onProgress:(p:number)=>void){
+export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNullable<ReturnType<typeof tableLines>>,onProgress:(p:number)=>void,region=''){
   const {rows,cols}=lines,folders:ScheduleDraft['folders']=[],warnings:string[]=[];
   const allSpans=rows.slice(1,-1).map((top,i)=>({top,bottom:rows[i+2]}));
   const heights=allSpans.map(r=>r.bottom-r.top).sort((a,b)=>a-b);
@@ -47,14 +66,22 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
   for(let i=0;i<spans.length;i++){
     const {top,bottom}=spans[i];
     async function cell(column:number){if(column+1>=cols.length)return '';const result=await worker.recognize(await image.crop({left:cols[column]+5,top:top+5,width:cols[column+1]-cols[column]-10,height:bottom-top-10}));return result.data.text.trim();}
-    const lot=readLotCell(await cell(1));
+    let lotText=await cell(1),lot=readLotCell(lotText,region);
+    if(!lot||!/[가-힣]/.test(lot)){
+      await worker.setParameters({tessedit_pageseg_mode:'11' as import('tesseract.js').PSM});
+      const retryText=await cell(1),retry=readLotCell(retryText,region);
+      await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM});
+      if(retry&&(!lot||/[가-힣]/.test(retry))){lotText=retryText;lot=retry;}
+    }
+    if(lot!==readLotCell(lotText))warnings.push(`일정 ${i+1}: 동 이름을 표 제목의 지역명과 대조해 보정했습니다. (${lot}) 원본을 확인해 주세요.`);
+    if(lot&&!/[가-힣]/.test(lot))warnings.push(`일정 ${i+1}: 숫자 번지만 읽었습니다. 동 이름을 포함해 주소를 확인해 주세요.`);
     if(!lot)warnings.push(`일정 ${i+1}의 번지를 읽지 못했습니다. 원본을 확인해 입력해 주세요.`);
     const name=(await cell(2)).replace(/\s+/g,'');
     const phoneText=(await cell(3)).replace(/\s+/g,'');
     const phones=phoneText.match(/0\d{1,2}-\d{3,4}-\d{4}/g)||[];
     const time=(await cell(4)).replace(/\s+/g,'').replace(/[〜～]/g,'~');
     const address=normalizeRoadAddress(await cell(5));
-    const notes=(await cell(6)).replace(/\s+/g,' ').trim();
+    const notes=(await cell(6)).split(/\r?\n/).map(line=>line.replace(/[ \t]+/g,' ').trim()).filter(Boolean).join('\n');
     const unit=/\d\s*호/.test(address)?address.replace(/\s+/g,''):'';
     if(/[A-Za-z]/.test(address)&&unit)warnings.push(`일정 ${i+1}: 영문이 섞인 건물·동 이름을 원본과 확인해 주세요. (${address})`);
     folders.push({lot,unit,time,name,phones,address,notes,group:1});

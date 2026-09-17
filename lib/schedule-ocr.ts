@@ -35,12 +35,12 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
   // Korean tessdata requests an optional Traditional Chinese sublanguage;
   // limit initialization to the two models bundled with this application.
   const config:Partial<import('tesseract.js').InitOptions>&{tessedit_load_sublangs:string}={tessedit_load_sublangs:''};
-  const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
+  const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
   try{
     if(lines){
       onProgress(10);const draft=await readScheduleHeader(worker,scan,lines.rows[0],parseScheduleText);
-      const table=await readTableRows(worker,scan,lines,onProgress);
-      onProgress(100);return {...draft,folders:table.folders,warnings:table.warnings};
+      const table=await readTableRows(worker,scan,lines,onProgress,draft.region);
+      onProgress(100);return {...draft,folders:table.folders,warnings:[...table.warnings,'이름·연락처·긴 비고는 원본과 비교해 주세요. 자동 인식이 일부 글자를 다르게 읽을 수 있습니다.']};
     }
     const {data}=await worker.recognize(canvas,{}, {text:true,blocks:true});
     const words=data.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words)))||[];
