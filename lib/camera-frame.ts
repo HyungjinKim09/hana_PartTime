@@ -25,12 +25,10 @@ export function drawSavedFrame(canvas:HTMLCanvasElement,source:CanvasImageSource
 }
 
 // Site camera only. The live video is displayed directly by the browser.
-// Clockwise rotation at save time converts landscape to portrait; already
-// portrait video must not be normalized twice (which previously inverted it).
-export function drawPortraitCapture(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number){
+// Always rotate saved pixels counterclockwise, regardless of stream dimensions.
+export function drawCameraCaptureLeft(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number){
   if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0)throw new Error('Camera frame not ready');
-  const landscape=width>height;
-  drawFrame(canvas,source,width,height,{width:landscape?height:width,height:landscape?width:height,rotation:landscape?90:0},Infinity);
+  drawFrame(canvas,source,width,height,{width:height,height:width,rotation:270},Infinity);
 }
 
 function drawFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,layout:{width:number;height:number;rotation:number},maxWidth:number){

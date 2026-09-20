@@ -44,11 +44,12 @@ test('every saved 90-degree step changes pixels, never gets cancelled by portrai
  }
 });
 
-test('site capture rotates a landscape frame clockwise, but never flips an already upright portrait frame',async()=>{
- const {drawPortraitCapture}=await import('../lib/camera-frame.ts');
- for(const [w,h,expected] of [[640,480,[0,1,-1,0,480,0]],[480,640,[1,0,0,1,0,0]]]){
+test('site capture always turns left 90 degrees, for landscape, portrait and square input',async()=>{
+ const {drawCameraCaptureLeft}=await import('../lib/camera-frame.ts');
+ for(const [w,h] of [[640,480],[480,640],[480,480]]){
   let matrix;const canvas={width:0,height:0,getContext(){return {setTransform(...m){matrix=m;},drawImage(){}}}};
-  drawPortraitCapture(canvas,{},w,h);
-  assert.equal(canvas.width,480);assert.equal(canvas.height,640);assert.deepEqual(matrix,expected);
+  drawCameraCaptureLeft(canvas,{},w,h);
+  assert.equal(canvas.width,h);assert.equal(canvas.height,w);
+  assert.deepEqual(matrix,[0,-1,1,0,0,w]);
  }
 });
