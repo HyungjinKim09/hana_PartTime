@@ -139,7 +139,7 @@ try{
   assert.equal((await request(firstTicket.url)).status,410,'download token cannot be replayed');
   const archive=await archiveRequest('/api/export');assert.equal(archive.status,200);
   const archiveBytes=Buffer.from(await archive.arrayBuffer());
-  const checked=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; files=[x for x in z.namelist() if not x.endswith("/")]; folders=[x for x in z.namelist() if x.endswith("/")]; assert len(files)==3; assert len(set(files))==3; assert len(folders)==12; assert len([x for x in files if "/사직동 158-22/" in x])==2; assert len(set(z.read(x) for x in files))==1; print(json.dumps({"folders":len(folders),"photos":len(files),"originals_intact":True}))'],{input:archiveBytes,encoding:'utf8'});
+  const checked=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; files=[x for x in z.namelist() if not x.endswith("/")]; folders=[x for x in z.namelist() if x.endswith("/")]; assert len(files)==3; assert len(set(files))==3; assert len(folders)==12; assert len([x for x in files if "/사직동 158-022(" in x])==2; assert len(set(z.read(x) for x in files))==1; print(json.dumps({"folders":len(folders),"photos":len(files),"originals_intact":True}))'],{input:archiveBytes,encoding:'utf8'});
   assert.equal(checked.status,0,checked.stderr);console.log('ZIP verification:',checked.stdout.trim());
   await db.prepare("CREATE TRIGGER fail_photo_update BEFORE UPDATE ON photos BEGIN SELECT RAISE(FAIL, 'injected metadata failure'); END").run();
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:{origin:'https://fieldnote.test'}})).status,503,'Metadata failure must not delete the original');
@@ -198,8 +198,8 @@ try{
   console.log('PASS: old OCR-spaced addresses are repaired in folder views and reports without reupload.');
   for(let repeat=0;repeat<2;repeat++){
     const manifest=await (await request('/api/export?folder=158-22')).json();
-    assert.equal(manifest.name,'사직동 158-22.zip');
-    assert.ok(manifest.entries.every(entry=>entry.name.startsWith('사직동 158-22/')));
+    assert.equal(manifest.name,'사직동 158-022(과정로73번길 16-5).zip');
+    assert.ok(manifest.entries.every(entry=>entry.name.startsWith('사직동 158-022(과정로73번길 16-5)/')));
     for(const entry of manifest.entries.filter(entry=>entry.url)){
       const original=await request(entry.url);assert.equal(original.status,200);assert.equal((await original.arrayBuffer()).byteLength,entry.size);
     }
@@ -208,7 +208,7 @@ try{
   assert.equal(dateManifest.name,'2026-10-02.zip');
   assert.ok(dateManifest.entries.every(entry=>entry.name.startsWith('2026-10-02/')));
   const lotZip=await archiveRequest('/api/export?folder=158-22');
-  const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("사직동 158-22/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
+  const lotCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;assert all(n.startswith("사직동 158-022(과정로73번길 16-5)/") for n in z.namelist());assert len(z.namelist())==2'],{input:Buffer.from(await lotZip.arrayBuffer()),encoding:'utf8'});assert.equal(lotCheck.status,0,lotCheck.stderr);
   const duplicate=await request('/api/schedules',{method:'POST',body:unitForm([{...units[0],lot:'검증동 999-1'}])});assert.equal(duplicate.status,201);
   const collisionZip=await archiveRequest('/api/export?region='+encodeURIComponent('호수검증구역'));
   const collisionCheck=spawnSync('python',['-c','import sys,io,zipfile,json;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None;dirs=[n for n in z.namelist() if n.endswith("/")];assert len(dirs)==len(set(dirs))==12;assert "2026-09-15/201호 (2)/" in dirs;print(json.dumps([n for n in z.namelist() if n.endswith("same.png")]))'],{input:Buffer.from(await collisionZip.arrayBuffer()),encoding:'utf8'});assert.equal(collisionCheck.status,0,collisionCheck.stderr);

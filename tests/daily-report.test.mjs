@@ -3,10 +3,20 @@ import assert from 'node:assert/strict';
 import {dailyReport,buildingCategory,exportFolderLabel,SURVEY_STATUSES,surveyStatus} from '../lib/daily-report.ts';
 const base={id:'a',region:'망미5구역',date:'2026-09-17',lot:'망미동 937-224',address:'톳고개로 68-5',notes:'방문 전 연락 요망',group:1,time:'10:00',name:'',phones:[],count:0,bytes:0};
 test('download names use lot addresses for general buildings and only unit numbers for apartments',()=>{
- assert.equal(exportFolderLabel(base),'망미동 937-224');
+ assert.equal(exportFolderLabel(base),'망미동 937-224(톳고개로 68-5)');
  assert.equal(exportFolderLabel({...base,unit:'배산301호'}),'301호');
  assert.equal(exportFolderLabel({...base,unit:'아림파크 2동 215호'}),'215호');
  assert.equal(exportFolderLabel({...base,address:'영미주택 101호'}),'101호');
+});
+
+test('general ZIP folder names pad only lot numbers and append normalized road addresses',()=>{
+ assert.equal(exportFolderLabel({...base,lot:'망미동 435-38',address:'과정로85번길 12-4'}),'망미동 435-038(과정로85번길 12-4)');
+ assert.equal(exportFolderLabel({...base,lot:'망미동 5-8',address:'과 정 로 85 번 길 12 - 4'}),'망미동 005-008(과정로85번길 12-4)');
+ assert.equal(exportFolderLabel({...base,lot:'망미동 435-038',address:''}),'망미동 435-038');
+ assert.equal(exportFolderLabel({...base,lot:'망미동 12',address:'  '}),'망미동 012');
+ assert.equal(exportFolderLabel({...base,lot:'망미동 산 5-2',address:''}),'망미동 산 005-002');
+ assert.equal(exportFolderLabel({...base,lot:'망미동 1234-5678',address:''}),'망미동 1234-5678');
+ assert.equal(exportFolderLabel({...base,lot:'현장 임시폴더',address:''}),'현장 임시폴더');
 });
 test('report separates buildings by unit, preserves remarks and defaults empty remarks',()=>{
  const text=dailyReport(base.region,base.date,[{...base,buildingDetails:'1동3층',surveyStatus:'완료',remarks:'보일러는 심야보일러를 합쳐 4개.\n화분의 나무는 별도 작성함.'},{...base,id:'b',lot:'망미동 937-020',unit:'영미주택 101호',surveyStatus:'완료',remarks:'  '},{...base,id:'c',lot:'망미동 937-020',unit:'영미주택 102호',surveyStatus:'완료'},{...base,id:'x',date:'2026-09-18',remarks:'다른 날'}]);
