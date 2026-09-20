@@ -43,3 +43,12 @@ test('every saved 90-degree step changes pixels, never gets cancelled by portrai
   assert.equal(landscapeFrameLayout(w,h,parseCameraTurns(null)).height,640,'default saved result is portrait');
  }
 });
+
+test('site capture rotates a landscape frame clockwise, but never flips an already upright portrait frame',async()=>{
+ const {drawPortraitCapture}=await import('../lib/camera-frame.ts');
+ for(const [w,h,expected] of [[640,480,[0,1,-1,0,480,0]],[480,640,[1,0,0,1,0,0]]]){
+  let matrix;const canvas={width:0,height:0,getContext(){return {setTransform(...m){matrix=m;},drawImage(){}}}};
+  drawPortraitCapture(canvas,{},w,h);
+  assert.equal(canvas.width,480);assert.equal(canvas.height,640);assert.deepEqual(matrix,expected);
+ }
+});

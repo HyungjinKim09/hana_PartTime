@@ -4,7 +4,7 @@ import {Camera,CloudUpload,Trash2} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {Progress} from '@/components/ui/progress';
 import {isUltraWideCamera,preferredCamera} from '@/lib/camera-lenses';
-import {drawLandscapeFrame,drawSavedFrame} from '@/lib/camera-frame';
+import {drawPortraitCapture} from '@/lib/camera-frame';
 type Capture={id:string;file:File;url:string};
 export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabled:boolean;progress:{done:number;total:number};onUpload:(files:File[])=>Promise<File[]>;onPendingChange:(pending:boolean)=>void}){
   const [shots,setShots]=useState<Capture[]>([]),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -13,30 +13,11 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
   const [camera,setCamera]=useState<'off'|'starting'|'ready'>('off'),[capturing,setCapturing]=useState(false),[cameraError,setCameraError]=useState('');
   const [lenses,setLenses]=useState<MediaDeviceInfo[]>([]),[lensId,setLensId]=useState('');
   const rememberedLens=useRef('');
-  const preview=useRef<HTMLCanvasElement>(null);
   const [previewReady,setPreviewReady]=useState(false);
-  function drawPreview(){
-    const element=video.current,target=preview.current;
-    if(!element||!target||element.readyState<2||!element.videoWidth||!element.videoHeight)return false;
-    drawLandscapeFrame(target,element,element.videoWidth,element.videoHeight,0,960);
-    return true;
+  function updatePreviewReady(){
+    const element=video.current;
+    setPreviewReady(!!element&&element.readyState>=2&&element.videoWidth>0&&element.videoHeight>0);
   }
-  useEffect(()=>{
-    if(!open||camera!=='ready')return;
-    const element=video.current;if(!element)return;
-    let cancelled=false,callback=0,animation=0,last=-Infinity,shown=false;
-    const paint=(now:number)=>{
-      if(cancelled)return;
-      if(now-last>=1000/15){
-        try{if(drawPreview()){last=now;if(!shown){shown=true;setPreviewReady(true);}}}
-        catch{setPreviewReady(false);shown=false;}
-      }
-      if(element.requestVideoFrameCallback)callback=element.requestVideoFrameCallback(paint);
-      else animation=requestAnimationFrame(paint);
-    };
-    paint(performance.now());
-    return ()=>{cancelled=true;if(callback)element.cancelVideoFrameCallback(callback);if(animation)cancelAnimationFrame(animation);};
-  },[open,camera]);
   function stopCamera(){
     generation.current++;
     stream.current?.getTracks().forEach(track=>track.stop());stream.current=null;
@@ -82,7 +63,7 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
       if(!element)throw new Error('Camera view unavailable');
       element.srcObject=media;await element.play();
       if(request!==generation.current)return;
-      setCamera('ready');
+      setCamera('ready');updatePreviewReady();
       media.getVideoTracks().forEach(track=>{track.onended=()=>{if(request===generation.current){stopCamera();setCameraError('카메라가 중단되었습니다. 다시 켜거나 기본 카메라를 이용해 주세요.');}};});
     }catch{
       if(request!==generation.current)return;
@@ -95,8 +76,8 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     captureLock.current=true;setCapturing(true);const request=generation.current;
     try{
       const canvas=document.createElement('canvas');
-      // Site camera only: landscape preview, portrait file, independent of old settings.
-      drawSavedFrame(canvas,element,element.videoWidth,element.videoHeight,1);
+      // Only the saved file is rotated. Live video follows the browser camera orientation.
+      drawPortraitCapture(canvas,element,element.videoWidth,element.videoHeight);
       const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/jpeg',0.95));
       if(request!==generation.current)return;
       if(!blob)throw new Error('Capture failed');
@@ -127,8 +108,8 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     <button className="secondary-button camera-button" disabled={disabled||busy} onClick={()=>shots.length?setOpen(true):void startCamera()}><Camera size={17}/>{shots.length?`촬영 사진 ${shots.length}장`:'촬영'}</button>
     <input ref={input} data-capture-queue type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';if(files.length)collect(files);}}/>
     <Dialog open={open} onOpenChange={value=>{if(!busy){if(!value)stopCamera();setOpen(value);}}}><DialogContent className="capture-dialog" onInteractOutside={e=>e.preventDefault()}><DialogHeader><DialogTitle>연속 촬영 · {shots.length}장</DialogTitle><DialogDescription>촬영 버튼을 눌러 여러 장을 담고 한 번에 업로드하세요. 업로드 전 사진은 이 화면에만 임시 보관됩니다.</DialogDescription></DialogHeader>
-      <div className="capture-view" hidden={camera==='off'}><video className="capture-source" ref={video} autoPlay muted playsInline aria-hidden="true"/><canvas ref={preview} className="capture-landscape-preview" aria-label="촬영 미리보기" hidden={!previewReady}/>{!previewReady&&<p role="status">촬영을 준비하는 중…</p>}</div>
-      {camera==='ready'&&<div className="capture-direction"><span>사이트 촬영: 가로 화면 → 세로 파일 저장</span></div>}
+      <div className="capture-view" hidden={camera==='off'}><video className="capture-live-preview" ref={video} autoPlay muted playsInline aria-label="촬영 미리보기" onLoadedData={updatePreviewReady} onPlaying={updatePreviewReady} onResize={updatePreviewReady} onEmptied={()=>setPreviewReady(false)}/>{!previewReady&&<p role="status">촬영을 준비하는 중…</p>}</div>
+      {camera==='ready'&&<div className="capture-direction"><span>오른손 가로 촬영 · 사진은 세로 파일로 저장</span></div>}
       {cameraError&&<p role="status" className="error-banner">{cameraError}</p>}
       {camera==='ready'&&<div className="capture-lenses">
         {lenses.some(lens=>isUltraWideCamera(lens.label))&&<button className="secondary-button" aria-pressed={lenses.some(lens=>lens.deviceId===lensId&&isUltraWideCamera(lens.label))} disabled={capturing||busy||disabled} onClick={()=>void startCamera(lenses.find(lens=>isUltraWideCamera(lens.label))!.deviceId)}>초광각 · 0.5–0.6배</button>}
