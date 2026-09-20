@@ -27,3 +27,18 @@ test('all rotations preserve every corner in both preview and full-resolution JP
   assert.deepEqual(full.corners,corners[((w<h?1:0)+turns)%4]);
  }
 });
+
+// The camera is held horizontally, but the delivered file must be portrait.
+test('portrait export rotates a landscape preview by 90 degrees without cropping, for every saved preference',async()=>{
+ const {drawPortraitFrame}=await import('../lib/camera-frame.ts');
+ for(const [w,h] of [[640,480],[480,640]])for(let turns=0;turns<4;turns++){
+  let matrix;const canvas={width:0,height:0,getContext(){return {setTransform(...m){matrix=m;},drawImage(){}};}};
+  drawPortraitFrame(canvas,{},w,h,turns);
+  assert.equal(canvas.width,480);assert.equal(canvas.height,640);
+  const preview=landscapeFrameLayout(w,h,turns);const rotation=(preview.rotation+(preview.width>preview.height?90:0))%360;
+  const [a,b,c,d,e,f]=matrix;
+  const points=[[0,0],[w,0],[w,h],[0,h]].map(([x,y])=>[(a*x+c*y+e)/canvas.width,(b*x+d*y+f)/canvas.height]);
+  const expected=[[[0,0],[1,0],[1,1],[0,1]],[[1,0],[1,1],[0,1],[0,0]],[[1,1],[0,1],[0,0],[1,0]],[[0,1],[0,0],[1,0],[1,1]]];
+  assert.deepEqual(points,expected[rotation/90]);
+ }
+});

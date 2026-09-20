@@ -1,4 +1,5 @@
-// Field photos are landscape. Rotate pixels, not just CSS or EXIF metadata.
+// Capture is landscape by default; delivered files are portrait.
+// Rotate pixels, not just CSS or EXIF metadata.
 // Screen orientation is deliberately not used: it may be locked, and the
 // browser may already have rotated the camera stream.
 export const CAMERA_TURNS_KEY='hana-camera-quarter-turns';
@@ -12,6 +13,16 @@ export function landscapeFrameLayout(width:number,height:number,turns:number){
 
 export function drawLandscapeFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,turns:number,maxWidth=Infinity){
   const layout=landscapeFrameLayout(width,height,turns);
+  drawFrame(canvas,source,width,height,layout,maxWidth);
+}
+
+export function drawPortraitFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,turns:number){
+  const preview=landscapeFrameLayout(width,height,turns);
+  const layout=preview.width>preview.height?{width:preview.height,height:preview.width,rotation:(preview.rotation+90)%360}:preview;
+  drawFrame(canvas,source,width,height,layout,Infinity);
+}
+
+function drawFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,layout:{width:number;height:number;rotation:number},maxWidth:number){
   const scale=Math.min(1,maxWidth/Math.max(layout.width,layout.height));
   const outWidth=Math.max(1,Math.round(layout.width*scale)),outHeight=Math.max(1,Math.round(layout.height*scale));
   if(canvas.width!==outWidth)canvas.width=outWidth;
