@@ -2,8 +2,10 @@
 // Rotate pixels, not just CSS or EXIF metadata.
 // Screen orientation is deliberately not used: it may be locked, and the
 // browser may already have rotated the camera stream.
-export const CAMERA_TURNS_KEY='hana-camera-quarter-turns';
-export function parseCameraTurns(value:string|null):number{return value!==null&&/^[0-3]$/.test(value)?Number(value):0;}
+// Versioned: the old setting rotated the live preview and was subsequently
+// overridden by portrait normalization. This setting rotates only the output.
+export const CAMERA_TURNS_KEY='hana-camera-save-quarter-turns-v2';
+export function parseCameraTurns(value:string|null):number{return value!==null&&/^[0-3]$/.test(value)?Number(value):1;}
 
 export function landscapeFrameLayout(width:number,height:number,turns:number){
   if(!Number.isFinite(width)||!Number.isFinite(height)||width<=0||height<=0)throw new Error('Camera frame not ready');
@@ -16,10 +18,10 @@ export function drawLandscapeFrame(canvas:HTMLCanvasElement,source:CanvasImageSo
   drawFrame(canvas,source,width,height,layout,maxWidth);
 }
 
-export function drawPortraitFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,turns:number){
-  const preview=landscapeFrameLayout(width,height,turns);
-  const layout=preview.width>preview.height?{width:preview.height,height:preview.width,rotation:(preview.rotation+90)%360}:preview;
-  drawFrame(canvas,source,width,height,layout,Infinity);
+export function drawSavedFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,turns:number,maxWidth=Infinity){
+  // Never normalize again after applying the user's angle: doing so made
+  // adjacent quarter turns produce identical files.
+  drawFrame(canvas,source,width,height,landscapeFrameLayout(width,height,turns),maxWidth);
 }
 
 function drawFrame(canvas:HTMLCanvasElement,source:CanvasImageSource,width:number,height:number,layout:{width:number;height:number;rotation:number},maxWidth:number){
