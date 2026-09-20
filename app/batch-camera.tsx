@@ -1,10 +1,10 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
-import {Camera,CloudUpload,Trash2,RotateCw} from 'lucide-react';
+import {Camera,CloudUpload,Trash2} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {Progress} from '@/components/ui/progress';
 import {isUltraWideCamera,preferredCamera} from '@/lib/camera-lenses';
-import {drawSavedFrame,parseCameraTurns,CAMERA_TURNS_KEY} from '@/lib/camera-frame';
+import {drawLandscapeFrame,drawSavedFrame} from '@/lib/camera-frame';
 type Capture={id:string;file:File;url:string};
 export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabled:boolean;progress:{done:number;total:number};onUpload:(files:File[])=>Promise<File[]>;onPendingChange:(pending:boolean)=>void}){
   const [shots,setShots]=useState<Capture[]>([]),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -13,21 +13,12 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
   const [camera,setCamera]=useState<'off'|'starting'|'ready'>('off'),[capturing,setCapturing]=useState(false),[cameraError,setCameraError]=useState('');
   const [lenses,setLenses]=useState<MediaDeviceInfo[]>([]),[lensId,setLensId]=useState('');
   const rememberedLens=useRef('');
-  const preview=useRef<HTMLCanvasElement>(null),rotationTurns=useRef(1);
-  const [savedTurns,setSavedTurns]=useState(1);
-  useEffect(()=>{try{rotationTurns.current=parseCameraTurns(localStorage.getItem(CAMERA_TURNS_KEY));setSavedTurns(rotationTurns.current);}catch{/* Storage may be disabled; capture still works. */}},[]);
-  function rotateCamera(){
-    rotationTurns.current=(rotationTurns.current+1)%4;
-    setSavedTurns(rotationTurns.current);
-    try{localStorage.setItem(CAMERA_TURNS_KEY,String(rotationTurns.current));}
-    catch{setCameraError('이 브라우저에서 방향 설정을 저장하지 못했습니다. 현재 촬영 중에는 유지됩니다.');}
-    drawPreview();
-  }
+  const preview=useRef<HTMLCanvasElement>(null);
   const [previewReady,setPreviewReady]=useState(false);
   function drawPreview(){
     const element=video.current,target=preview.current;
     if(!element||!target||element.readyState<2||!element.videoWidth||!element.videoHeight)return false;
-    drawSavedFrame(target,element,element.videoWidth,element.videoHeight,rotationTurns.current,960);
+    drawLandscapeFrame(target,element,element.videoWidth,element.videoHeight,0,960);
     return true;
   }
   useEffect(()=>{
@@ -104,8 +95,8 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     captureLock.current=true;setCapturing(true);const request=generation.current;
     try{
       const canvas=document.createElement('canvas');
-      // Save exactly the angle shown in the output preview, once only.
-      drawSavedFrame(canvas,element,element.videoWidth,element.videoHeight,rotationTurns.current);
+      // Site camera only: landscape preview, portrait file, independent of old settings.
+      drawSavedFrame(canvas,element,element.videoWidth,element.videoHeight,1);
       const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/jpeg',0.95));
       if(request!==generation.current)return;
       if(!blob)throw new Error('Capture failed');
@@ -137,7 +128,7 @@ export function BatchCamera({disabled,progress,onUpload,onPendingChange}:{disabl
     <input ref={input} data-capture-queue type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';if(files.length)collect(files);}}/>
     <Dialog open={open} onOpenChange={value=>{if(!busy){if(!value)stopCamera();setOpen(value);}}}><DialogContent className="capture-dialog" onInteractOutside={e=>e.preventDefault()}><DialogHeader><DialogTitle>연속 촬영 · {shots.length}장</DialogTitle><DialogDescription>촬영 버튼을 눌러 여러 장을 담고 한 번에 업로드하세요. 업로드 전 사진은 이 화면에만 임시 보관됩니다.</DialogDescription></DialogHeader>
       <div className="capture-view" hidden={camera==='off'}><video className="capture-source" ref={video} autoPlay muted playsInline aria-hidden="true"/><canvas ref={preview} className="capture-landscape-preview" aria-label="촬영 미리보기" hidden={!previewReady}/>{!previewReady&&<p role="status">촬영을 준비하는 중…</p>}</div>
-      {camera==='ready'&&<div className="capture-direction"><span>촬영·저장 · {savedTurns%2?'세로':'가로'} · {savedTurns*90}°<br/>보이는 방향 그대로 저장 · 설정 유지</span><button className="subtle-button" disabled={capturing||busy||!previewReady} onClick={rotateCamera}><RotateCw size={17}/>90° 회전</button></div>}
+      {camera==='ready'&&<div className="capture-direction"><span>사이트 촬영: 가로 화면 → 세로 파일 저장</span></div>}
       {cameraError&&<p role="status" className="error-banner">{cameraError}</p>}
       {camera==='ready'&&<div className="capture-lenses">
         {lenses.some(lens=>isUltraWideCamera(lens.label))&&<button className="secondary-button" aria-pressed={lenses.some(lens=>lens.deviceId===lensId&&isUltraWideCamera(lens.label))} disabled={capturing||busy||disabled} onClick={()=>void startCamera(lenses.find(lens=>isUltraWideCamera(lens.label))!.deviceId)}>초광각 · 0.5–0.6배</button>}
