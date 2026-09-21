@@ -89,8 +89,8 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
   }catch(e){toast.error(e instanceof Error?e.message:'삭제하지 못했습니다.');}finally{setDeleteBusy(false);}}
   const exportFolder=folders.find(f=>f.id===exportScope);
   const baseFolders=folders.filter(f=>(!region||f.region===region)&&(view==='address'||!date||f.date===date));
-  const scoped=baseFolders.filter(f=>withinAddress(f,addressPath,view==='address'));
-  const nodes=addressNodes(baseFolders,addressPath,view==='address');
+  const scoped=view==='address'?baseFolders.filter(f=>withinAddress(f,addressPath,true)):baseFolders;
+  const nodes=view==='address'?addressNodes(baseFolders,addressPath,true):baseFolders.map(f=>({key:f.id,label:folderLabel(f),folders:[f],leaf:true}));
   useEffect(()=>{
     if(view!=='address'||!addressPath.length||addressPath[0].startsWith('category:')||!folders.length)return;
     const match=folders.find(f=>(!region||f.region===region)&&withinAddress(f,addressPath));
@@ -98,19 +98,19 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
     const path=[addressParts(match,true)[0].key,...addressPath];setAddressPath(path);
     const q=new URLSearchParams(window.location.hash.slice(1));q.set('path',JSON.stringify(path));window.history.replaceState(window.history.state,'',window.location.pathname+window.location.search+'#'+q.toString());
   },[view,addressPath,folders,region]);
-  const pathLabels=addressPath.map((key,i)=>addressParts(scoped[0]||baseFolders.find(f=>withinAddress(f,addressPath.slice(0,i+1),view==='address'))||{id:'',region:'',lot:'',address:''},view==='address')[i]?.label||(key==='@whole'?'건물 전체·호수 미입력':'주소'));
-  const related=active?matchingAddress(baseFolders,active).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id)):[];
+  const pathLabels=(view==='address'?addressPath:[]).map((key,i)=>addressParts(scoped[0]||baseFolders.find(f=>withinAddress(f,addressPath.slice(0,i+1),view==='address'))||{id:'',region:'',lot:'',address:''},view==='address')[i]?.label||(key==='@whole'?'건물 전체·호수 미입력':'주소'));
+  const related=active?(view==='address'?matchingAddress(baseFolders,active):[active]).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id)):[];
   const regions=[...new Set(folders.map(f=>f.region))];
   const dates=[...new Set(scoped.map(f=>f.date))].sort().reverse();
   const exportQuery=new URLSearchParams(exportFolder?{folder:exportFolder.id}:region?date?{region,date}:{region}:{});
-  exportQuery.set('view',view);if(addressPath.length)exportQuery.set('path',JSON.stringify(addressPath));
-  const exportItems=exportFolder?matchingAddress(baseFolders,exportFolder):scoped;
+  exportQuery.set('view',view);if(view==='address'&&addressPath.length)exportQuery.set('path',JSON.stringify(addressPath));
+  const exportItems=exportFolder?(view==='address'?matchingAddress(baseFolders,exportFolder):[exportFolder]):scoped;
   const navigationGuard=useRef({uploading:false,remarksDirty:false,folderDeleteBusy:false,cameraPending:false});
   navigationGuard.current={uploading,remarksDirty,folderDeleteBusy,cameraPending};
   const historyPosition=useRef<{index:number;parents:number[]}>({index:0,parents:[]});
   function locationUrl(r:string|null,d:string|null,id:string|null,path:string[]=[],mode=view){const q=new URLSearchParams({view:mode});if(r)q.set('region',r);if(d&&mode==='date')q.set('date',d);if(id)q.set('folder',id);if(path.length)q.set('path',JSON.stringify(path));return window.location.pathname+window.location.search+'#'+q.toString();}
   useEffect(()=>{
-    const restore=()=>{setSearchQuery('');historyPosition.current=window.history.state?.hanaNavigation||{index:0,parents:[]};const q=new URLSearchParams(window.location.hash.slice(1));const mode=q.get('view')==='address'?'address':'date';setView(mode);setRegion(q.get('region'));setDate(mode==='date'?q.get('date'):null);setSelected(q.get('folder'));let path:string[]=[];try{const v=JSON.parse(q.get('path')||'[]');if(Array.isArray(v)&&v.length<=4&&v.every(x=>typeof x==='string'))path=v;}catch{}setAddressPath(path);setPreview(null);setExportScope(undefined);setImporting(false);setFolderDelete(false);setRemarksDirty(false);};
+    const restore=()=>{setSearchQuery('');historyPosition.current=window.history.state?.hanaNavigation||{index:0,parents:[]};const q=new URLSearchParams(window.location.hash.slice(1));const mode=q.get('view')==='address'?'address':'date';setView(mode);setRegion(q.get('region'));setDate(mode==='date'?q.get('date'):null);setSelected(q.get('folder'));let path:string[]=[];try{const v=JSON.parse(q.get('path')||'[]');if(Array.isArray(v)&&v.length<=4&&v.every(x=>typeof x==='string'))path=v;}catch{}setAddressPath(mode==='address'?path:[]);setPreview(null);setExportScope(undefined);setImporting(false);setFolderDelete(false);setRemarksDirty(false);};
     const pop=()=>{const old=historyPosition.current,next=window.history.state?.hanaNavigation as typeof old|undefined,g=navigationGuard.current;
       if(next&&next.index!==old.index&&(g.uploading||g.folderDeleteBusy||(g.remarksDirty&&!window.confirm('저장하지 않은 비고를 버리고 이동할까요?'))||(g.cameraPending&&!window.confirm('아직 업로드하지 않은 촬영 사진을 버리고 이동할까요?')))){window.history.go(old.index-next.index);return;}restore();};
     if(!window.history.state?.hanaNavigation)window.history.replaceState({...window.history.state,hanaNavigation:{index:0,parents:[]}},'');
@@ -119,7 +119,7 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
   function location(r:string|null,d:string|null=null,id:string|null=null,path:string[]=[],mode=view){
     if(uploading||folderDeleteBusy)return;if(remarksDirty){toast.info('비고를 저장한 뒤 이동해 주세요.');return;}
     if(cameraPending&&!window.confirm('아직 업로드하지 않은 촬영 사진을 버리고 이동할까요?'))return;
-    if(mode==='address')d=null;
+    if(mode==='address')d=null;else path=[];
     const url=locationUrl(r,d,id,path,mode);if(url===window.location.pathname+window.location.search+window.location.hash)return;
     const position={index:historyPosition.current.index+1,parents:[]};window.history.pushState({...window.history.state,hanaNavigation:position},'',url);historyPosition.current=position;
     setSearchQuery('');setView(mode);setAddressPath(path);setRegion(r);setDate(d);setSelected(id);setPreview(null);setExportScope(undefined);window.scrollTo({top:0,behavior:'smooth'});
@@ -175,7 +175,7 @@ export default function Workspace({userName,isAdmin=false}:{userName:string;isAd
       </main>
     </div>
     <Dialog open={!!preview} onOpenChange={open=>{if(!open)setPreview(null);}}><DialogContent className="photo-dialog"><DialogHeader><DialogTitle>{preview?.filename}</DialogTitle><DialogDescription>원본 사진 · {preview&&formatBytes(preview.size)}</DialogDescription></DialogHeader>{preview&&(preview.content_type==='image/heic'?<p>이 브라우저에서는 HEIC 미리보기를 지원하지 않을 수 있어요. 원본을 내려받아 확인해 주세요.</p>:<img className="large-preview" src={'/api/photos/'+preview.id} alt={preview.filename}/>)}{preview&&<a className="secondary-button" href={'/api/photos/'+preview.id+'?download=1'} download><ArrowDownToLine size={17}/>원본 다운로드</a>}</DialogContent></Dialog>
-    <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>{exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+f.count,0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+f.bytes,0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{view==='address'?'일반건물·구분건물 / 주소 / 동·호수 / 사진 (날짜 폴더 없음)':'날짜 / 주소 / 건물·동·호수 / 사진'}</div><p className="export-help">현재 보기의 주소·건물·동·호수 구조로 현장 사진만 내려받습니다. 주소별 보기에서는 날짜 폴더 없이 같은 주소의 사진을 모읍니다. 파일명에 고유번호를 붙여 사진을 모두 보존합니다.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
+    <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>{exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+f.count,0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+f.bytes,0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{view==='address'?'일반건물·구분건물 / 주소 / 동·호수 / 사진 (날짜 폴더 없음)':'날짜 / 기존 일정 폴더 / 사진'}</div><p className="export-help">현재 보기의 폴더 구조로 현장 사진만 내려받습니다. 주소별 보기에서는 날짜 폴더 없이 같은 주소의 사진을 모읍니다. 파일명에 고유번호를 붙여 사진을 모두 보존합니다.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
     {drawingPhoto&&<Suspense fallback={<div role="status">도면 편집기를 불러오는 중…</div>}><DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/></Suspense>}
     <ImportSchedule open={importing} manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d)=>{setImporting(false);location(r,d);void refresh(null);}}/>
     <AlertDialog open={folderDelete} onOpenChange={open=>{if(!folderDeleteBusy)setFolderDelete(open);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 폴더를 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{active?active.date+' · '+folderLabel(active):[region,date].filter(Boolean).join(' / ')}<br/>{active?1:scoped.length}개 일정 폴더 · {active?active.count:scoped.reduce((n,f)=>n+f.count,0)}장의 사진이 영구 삭제됩니다. {!active&&'이 범위의 일정표 원본도 함께 삭제됩니다.'} 마지막 건물 폴더를 삭제하면 해당 날짜의 일정표 원본도 함께 삭제됩니다. 삭제한 자료는 복구할 수 없습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={folderDeleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={folderDeleteBusy} onClick={e=>{e.preventDefault();void removeFolder();}}>{folderDeleteBusy?'삭제 중…':'폴더와 자료 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

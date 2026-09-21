@@ -28,3 +28,12 @@ test('building descriptions count distinct units, not survey dates, and distingu
  const apt=searchFolders([row('a','2026-09-17','한신아파트 2동 301호'),row('b','2026-09-18','한신아파트 3동 301호')],'한신','address');assert.equal(apt[0].unitCount,2);
  const general=searchFolders([row('a','2026-09-17','')],'937','address');assert.equal(general[0].unitCount,0);
 });
+
+test('date search opens each original schedule directly without building/block levels',()=>{
+ const rows=[row('a','2026-09-17','한신아파트 1동 201호'),row('b','2026-09-17','한신아파트 1동 202호'),row('c','2026-09-17','한신아파트 1동 201호')];
+ const result=searchFolders(rows,'한신','date');
+ assert.equal(result.length,3);
+ assert.ok(result.every(r=>r.leaf&&r.path.length===1&&r.folders.length===1));
+ assert.ok(result.some(r=>r.label.includes('1동 201호')));
+ assert.equal(searchFolders(rows,'한신','address').length,1);
+});

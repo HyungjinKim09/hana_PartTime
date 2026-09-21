@@ -10,7 +10,7 @@ export async function GET(request:Request){try{
   const [folders,usage]=await Promise.all([listFolders(db,owner),budgetUsage(db)]);
   const target=folders.find(f=>f.id===folder);
   if(folder&&!target)throw new ApiError('폴더를 찾을 수 없습니다.',404);
-  const ids=target?(params.has('view')?matchingAddress(folders,target).filter(f=>params.get('view')==='address'||f.date===target.date):[target]).map(f=>f.id):[];
+  const ids=target?(params.get('view')==='address'?matchingAddress(folders,target):[target]).map(f=>f.id):[];
   const photos:{created_at:string;id:string}[]=[];
   // Keep D1 bind counts bounded even for a long survey history.
   for(let i=0;i<ids.length;i+=80){const chunk=ids.slice(i,i+80);const result=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail FROM photos WHERE owner=? AND folder IN (${chunk.map(()=>'?').join(',')}) AND deleted=0 ORDER BY created_at DESC,id DESC`).bind(owner,...chunk).all();photos.push(...result.results as {created_at:string;id:string}[]);}

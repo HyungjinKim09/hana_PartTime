@@ -1,5 +1,5 @@
 import {buildingCategory} from './daily-report.ts';
-import type {Folder} from './types';
+import {folderLabel,type Folder} from './types.ts';
 import {addressParts} from './address-folders.ts';
 const normalize=(value:string)=>value.normalize('NFKC').toLowerCase().replace(/\d+/g,n=>String(Number(n))).replace(/[\s()·\-–−.,]/g,'');
 export function searchFolders(folders:Folder[],query:string,view:'date'|'address',parentPath:string[]=[]){
@@ -7,7 +7,7 @@ export function searchFolders(folders:Folder[],query:string,view:'date'|'address
  if(!terms.length)return [];
  const groups=new Map<string,{folder:Folder;folders:Folder[];label:string;path:string[];count:number;matches:boolean;leaf:boolean;units:Set<string>;unitCount:number}>();
  for(const f of folders){
-  const parts=addressParts(f,view==='address');
+  const parts=view==='address'?addressParts(f,true):[{key:f.id,label:folderLabel(f)}];
   const depth=Math.max(view==='address'?2:1,parentPath.length+1);
   const path=parts.slice(0,depth).map(p=>p.key);
   const key=JSON.stringify([f.region,view==='date'?f.date:'',...path]);

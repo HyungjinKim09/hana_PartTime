@@ -20,8 +20,8 @@ export async function GET(request:Request){try{
   const view=params.get('view');
   let addressPath:string[]=[];
   if(params.has('path')){try{const value=JSON.parse(params.get('path')!);if(!Array.isArray(value)||value.length>4||!value.every(x=>typeof x==='string'&&x.length<1000))throw Error();addressPath=value;}catch{throw new ApiError('주소 경로를 확인해 주세요.');}}
-  if((view==='address'||view==='date')&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
-  if(view==='address'||view==='date')folders=folders.filter(f=>withinAddress(f,addressPath,view==='address'));
+  if(view==='address'&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
+  if(view==='address')folders=folders.filter(f=>withinAddress(f,addressPath,view==='address'));
   if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
   const {results}=await db.prepare("SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND deleted=0 AND kind='photo' ORDER BY created_at,id").bind(owner).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
   const entries:{name:string;size:number;url:string|null}[]=[];
@@ -38,8 +38,8 @@ export async function GET(request:Request){try{
     const sourceParts=addressParts(f,view==='address');
     const parts=sourceParts.map((p,i)=>safeFilename(canonicalNames.get(JSON.stringify([f.region,...sourceParts.slice(0,i+1).map(x=>x.key)]))||p.label));
     const relative=parts.slice(folder?parts.length-1:Math.max(0,addressPath.length-1));
-    const path=view==='address'||view==='date'
-      ?[...(!region&&!folder?[safeFilename(f.region)]:[]),...(view==='date'&&!folder&&!addressPath.length?[f.date]:[]),...relative].join('/')+'/'
+    const path=view==='address'
+      ?[...(!region&&!folder?[safeFilename(f.region)]:[]),...relative].join('/')+'/'
       :`${folder?'':f.date+'/'}${folderNames.get(f.id)}/`;
     if(!directories.has(path)){entries.push({name:path,size:0,url:null});directories.add(path);}
     for(const p of results.filter(p=>p.folder===f.id))addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);

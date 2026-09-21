@@ -326,6 +326,8 @@ try{
   assert.ok(manifest.entries.some(e=>e.name.includes('/2동/302호/')));assert.ok(manifest.entries.some(e=>e.name.includes('/3동/302호/')));
   const leaf=await(await request('/api/export?view=address&folder='+target.id)).json();assert.equal(leaf.files,2);assert.ok(leaf.entries.every(e=>e.name.startsWith('302호/')));
   const dated=await(await request('/api/export?view=date&region='+encodeURIComponent(addressRegion))).json();assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-01/')));assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-02/')));
+  assert.ok(dated.entries.filter(e=>e.url!==null).every(e=>e.name.split('/').length===3),'date ZIP must contain date / original schedule / photo only');
+  const datedFolder=await(await request('/api/export?view=date&folder='+target.id)).json();assert.equal(datedFolder.files,1);assert.ok(datedFolder.entries.filter(e=>e.url!==null).every(e=>e.name.split('/').length===2),'single date folder ZIP must start at original schedule');
   const categoryPath=addressParts(target,true).map(p=>p.key);
   const selectedManifest=await(await request('/api/export?'+new URLSearchParams({view:'address',region:addressRegion,path:JSON.stringify(categoryPath)}))).json();assert.equal(selectedManifest.files,2);assert.ok(selectedManifest.entries.every(e=>e.name.startsWith('302호/')));
   const categoryOnly=await(await request('/api/export?'+new URLSearchParams({view:'address',region:addressRegion,path:JSON.stringify(['category:구분건물'])}))).json();assert.equal(categoryOnly.files,4);assert.ok(categoryOnly.entries.every(e=>e.name.startsWith('구분건물/')));
