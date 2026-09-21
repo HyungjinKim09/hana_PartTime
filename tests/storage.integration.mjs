@@ -238,7 +238,7 @@ try{
   const manualFolder=manualAfter.folders.find(f=>f.lot==='수기동 10-1');assert.equal(manualFolder.time,'14:30');assert.equal(manualFolder.notes,'추가 방문');assert.deepEqual(manualFolder.phones,['010-1234-5678']);
   assert.equal(manualFolder.manualAdded,true);assert.equal(manualFolder.unitDisplay,'만주골든빌 B동 201호');
   const extraReport=await(await request('/api/report?'+new URLSearchParams({region:manualDraft.region,date:manualDraft.date}))).json();
-  assert.match(extraReport.text,/추가일정\n\n1\. 수기동 10-1\(만주골든빌 B동 201호\) - 미완료 \/ 특이사항 없음/);
+  assert.match(extraReport.text,/추가일정\n\n1\. 수기동 010-001\(만주골든빌 B동 201호\) - 미완료 \/ 특이사항 없음/);
   const normalDuplicate=await manual({...manualDraft,region:newFolder.region,date:newFolder.date,folders:[{...manualDraft.folders[0],lot:newFolder.lot,unit:newFolder.unit||''}]});assert.equal((await normalDuplicate.json()).existing,1);
   assert.equal((await(await request('/api/library')).json()).folders.find(f=>f.id===newFolder.id).manualAdded,false,'Manual resubmission never relabels an existing imported schedule');
   const appended=await manual({...manualDraft,folders:[{...manualDraft.folders[0],unit:'302호'}]});assert.equal((await appended.json()).added,1,'Append another unit to an existing date');

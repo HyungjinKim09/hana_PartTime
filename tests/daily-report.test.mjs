@@ -41,11 +41,20 @@ test('only the four requested statuses are selectable',()=>{
 
 test('manual additions have their own numbered report section after scheduled buildings',()=>{
  const text=dailyReport(base.region,base.date,[base,{...base,id:'extra',lot:'망미동 937-029',unit:'만주골든빌B동201호',unitDisplay:'만주골든빌 B동 201호',manualAdded:true,surveyStatus:'완료',remarks:''},{...base,id:'extra2',lot:'망미동 938-1',manualAdded:true,surveyStatus:'연기',remarks:'다음 주 방문'}]);
- assert.match(text,/추가일정\n\n1\. 망미동 937-029\(만주골든빌 B동 201호\) - 완료 \/ 특이사항 없음\n2\. 망미동 938-1/);
+ assert.match(text,/추가일정\n\n1\. 망미동 937-029\(만주골든빌 B동 201호\) - 완료 \/ 특이사항 없음\n2\. 망미동 938-001/);
  assert.equal(text.split('망미동 937-029').length,2);assert.ok(text.indexOf('망미동 937-224')<text.indexOf('추가일정'));assert.match(text,/연기 \/ 다음 주 방문/);
 });
 test('manual-only report retains pending status and omits empty standard sections',()=>{
  const text=dailyReport(base.region,base.date,[{...base,manualAdded:true}]);
  assert.match(text,/추가일정\n\n1\./);assert.match(text,/미완료 \/ 특이사항 없음/);assert.ok(!text.includes('일반건물'));assert.ok(!text.includes('구분건물'));
  assert.ok(!dailyReport(base.region,base.date,[base]).includes('추가일정'));
+});
+
+test('all report sections pad lot numbers without padding road or unit numbers',()=>{
+ const rows=[{...base,lot:'사직동 159-1',address:'중앙대로1267번길 12-4'},{...base,id:'unit',lot:'사직동 5-2',unit:'빌라 1동 101호'},{...base,id:'manual',lot:'사직동 159-3',manualAdded:true}];
+ const text=dailyReport(base.region,base.date,rows);
+ assert.ok(text.includes('사직동 159-001(중앙대로1267번길 12-4)'));
+ assert.ok(text.includes('사직동 005-002(빌라 1동 101호)'));
+ assert.ok(text.includes('사직동 159-003'));
+ assert.equal(rows[0].lot,'사직동 159-1');
 });
