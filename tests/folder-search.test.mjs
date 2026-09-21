@@ -22,3 +22,9 @@ test('building search opens a single building folder, then its unit hierarchy',(
  const child=searchFolders(rows,'101호','address',result[0].path);assert.equal(child.length,1);assert.equal(child[0].leaf,true);assert.equal(child[0].path.length,3);
  const general=searchFolders([row('g','2026-09-17','')],'937','address');assert.equal(general[0].leaf,true);
 });
+test('building descriptions count distinct units, not survey dates, and distinguish apartment blocks',()=>{
+ const villa=searchFolders([row('a','2026-09-17','영미주택 101호'),row('b','2026-09-18','영미주택 101호'),row('c','2026-09-18','영미주택 102호')],'영미주택','address');
+ assert.equal(villa[0].unitCount,2);
+ const apt=searchFolders([row('a','2026-09-17','한신아파트 2동 301호'),row('b','2026-09-18','한신아파트 3동 301호')],'한신','address');assert.equal(apt[0].unitCount,2);
+ const general=searchFolders([row('a','2026-09-17','')],'937','address');assert.equal(general[0].unitCount,0);
+});
