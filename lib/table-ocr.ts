@@ -1,6 +1,7 @@
 import type {Worker,ImageLike} from 'tesseract.js';
 import type {ScheduleDraft} from './types';
 import {normalizeRoadAddress} from './address.js';
+export type MixedCellReader=(data:Pick<import('tesseract.js').Page,'text'|'blocks'>,image:ImageLike,kind:'name'|'address')=>Promise<{text:string;changed:boolean}>;
 export type Rect={left:number;top:number;width:number;height:number};
 export type ScanImage={width:number;height:number;pixels:Uint8Array|Uint8ClampedArray;crop:(r:Rect)=>Promise<ImageLike>};
 export async function readScheduleHeader(worker:Worker,image:ScanImage,bottom:number,parse:(text:string)=>ScheduleDraft){
@@ -55,7 +56,7 @@ export function readLotCell(text:string,region=''){
   // A missing hyphen is not inferred: keep the row for explicit correction.
   return numbers?`${town?town+' ':''}${numbers[1]}-${numbers[2]}`:'';
 }
-export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNullable<ReturnType<typeof tableLines>>,onProgress:(p:number)=>void,region=''){
+export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNullable<ReturnType<typeof tableLines>>,onProgress:(p:number)=>void,region='',refine?:MixedCellReader){
   const {rows,cols}=lines,folders:ScheduleDraft['folders']=[],warnings:string[]=[];
   const allSpans=rows.slice(1,-1).map((top,i)=>({top,bottom:rows[i+2]}));
   const heights=allSpans.map(r=>r.bottom-r.top).sort((a,b)=>a-b);
@@ -65,7 +66,14 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
   await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
   for(let i=0;i<spans.length;i++){
     const {top,bottom}=spans[i];
-    async function cell(column:number){if(column+1>=cols.length)return '';const result=await worker.recognize(await image.crop({left:cols[column]+5,top:top+5,width:cols[column+1]-cols[column]-10,height:bottom-top-10}));return result.data.text.trim();}
+    async function cell(column:number){
+      if(column+1>=cols.length)return '';
+      const crop=await image.crop({left:cols[column]+5,top:top+5,width:cols[column+1]-cols[column]-10,height:bottom-top-10});
+      const mixed=!!refine&&(column===2||column===5);
+      const result=await worker.recognize(crop,{},mixed?{text:true,blocks:true}:{text:true});
+      if(mixed){try{const corrected=await refine!(result.data,crop,column===2?'name':'address');if(corrected.changed)warnings.push(`일정 ${i+1}: ${column===2?'이름':'주소'}의 영문 표식을 별도로 확인해 보완했습니다. (${result.data.text.trim()} → ${corrected.text}) 원본과 비교해 주세요.`);return corrected.text;}catch{warnings.push(`일정 ${i+1}: 영문 보완 인식을 완료하지 못했습니다. ${column===2?'이름':'주소'}를 원본과 확인해 주세요.`);}}
+      return result.data.text.trim();
+    }
     let lotText=await cell(1),lot=readLotCell(lotText,region);
     if(!lot||!/[가-힣]/.test(lot)){
       await worker.setParameters({tessedit_pageseg_mode:'11' as import('tesseract.js').PSM});

@@ -32,18 +32,35 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
   const scan={width:canvas.width,height:canvas.height,pixels:ctx.getImageData(0,0,canvas.width,canvas.height).data,async crop(r:import('./table-ocr').Rect){const c=document.createElement('canvas');c.width=r.width+40;c.height=r.height+40;const out=c.getContext('2d')!;out.fillStyle='white';out.fillRect(0,0,c.width,c.height);out.drawImage(canvas,r.left,r.top,r.width,r.height,20,20,r.width,r.height);return c;}};
   const lines=tableLines(scan);
   const {createWorker}=await import('tesseract.js');
+  const {refineMixedCell}=await import('./mixed-script-ocr');
   // Korean tessdata requests an optional Traditional Chinese sublanguage;
   // limit initialization to the two models bundled with this application.
   const config:Partial<import('tesseract.js').InitOptions>&{tessedit_load_sublangs:string}={tessedit_load_sublangs:''};
   const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
+  let english:Promise<import('tesseract.js').Worker>|undefined;
+  const refine:import('./table-ocr').MixedCellReader=(data,image,kind)=>refineMixedCell(data,image,kind,()=>english??=createWorker('eng',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2'},config),async box=>{
+    const source=image as HTMLCanvasElement;
+    const left=Math.max(0,box.x0),top=Math.max(0,box.y0),width=Math.min(source.width,box.x1)-left,height=Math.min(source.height,box.y1)-top;
+    if(width<=0||height<=0)throw new Error('영문 위치를 확인하지 못했습니다.');
+    const scale=Math.min(4,90/height),crop=document.createElement('canvas');crop.width=Math.round(width*scale)+40;crop.height=Math.round(height*scale)+40;
+    const c=crop.getContext('2d');if(!c)throw new Error('영문 이미지를 열지 못했습니다.');c.fillStyle='white';c.fillRect(0,0,crop.width,crop.height);c.drawImage(source,left,top,width,height,20,20,crop.width-40,crop.height-40);return crop;
+  },async right=>{
+    const source=image as HTMLCanvasElement,crop=document.createElement('canvas');crop.width=Math.max(1,Math.min(source.width,Math.floor(right)));crop.height=source.height;
+    const c=crop.getContext('2d');if(!c)throw new Error('이름 이미지를 열지 못했습니다.');c.drawImage(source,0,0);
+    return (await worker.recognize(crop)).data.text;
+  },async()=>{
+    await worker.reinitialize('kor',1,config);
+    try{await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});return (await worker.recognize(image,{}, {text:true,blocks:true})).data;}
+    finally{await worker.reinitialize('kor+eng',1,config);await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});}
+  });
   try{
     if(lines){
       onProgress(10);const draft=await readScheduleHeader(worker,scan,lines.rows[0],parseScheduleText);
-      const table=await readTableRows(worker,scan,lines,onProgress,draft.region);
+      const table=await readTableRows(worker,scan,lines,onProgress,draft.region,refine);
       onProgress(100);return {...draft,folders:table.folders,warnings:[...table.warnings,'이름·연락처·긴 비고는 원본과 비교해 주세요. 자동 인식이 일부 글자를 다르게 읽을 수 있습니다.']};
     }
     const {data}=await worker.recognize(canvas,{}, {text:true,blocks:true});
     const words=data.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words)))||[];
     const result=parseScheduleText(data.text,words);result.warnings.unshift('표의 칸을 구분하지 못했습니다. 누락된 일정이 없는지 원본의 행 수와 비교해 주세요.');return result;
-  }finally{await worker.terminate();}
+  }finally{await worker.terminate();if(english)await english.then(w=>w.terminate()).catch(()=>{});}
 }
