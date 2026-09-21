@@ -1,3 +1,4 @@
+import {addressParts,matchingAddress,withinAddress} from '@/lib/address-folders';
 import {listFolders} from '@/lib/folders';
 import {exportFolderLabel} from '@/lib/daily-report';
 import {ApiError,failure,identity,storage,json} from '@/lib/storage';
@@ -15,7 +16,12 @@ export async function GET(request:Request){try{
     while(used.has(key(name))){const suffix=` (${++index})`;name=base.slice(0,120-suffix.length)+suffix;}
     used.add(key(name));folderNames.set(f.id,name);
   }
-  const folders=allFolders.filter(f=>(!folder||f.id===folder)&&(!region||f.region===region)&&(!date||f.date===date));
+  let folders=allFolders.filter(f=>(!folder||f.id===folder)&&(!region||f.region===region)&&(!date||f.date===date));
+  const view=params.get('view');
+  let addressPath:string[]=[];
+  if(params.has('path')){try{const value=JSON.parse(params.get('path')!);if(!Array.isArray(value)||value.length>3||!value.every(x=>typeof x==='string'&&x.length<1000))throw Error();addressPath=value;}catch{throw new ApiError('주소 경로를 확인해 주세요.');}}
+  if((view==='address'||view==='date')&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
+  if(view==='address'||view==='date')folders=folders.filter(f=>withinAddress(f,addressPath));
   if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
   const {results}=await db.prepare("SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND deleted=0 AND kind='photo' ORDER BY created_at,id").bind(owner).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
   const entries:{name:string;size:number;url:string|null}[]=[];
@@ -24,8 +30,18 @@ export async function GET(request:Request){try{
     downloadKeys.push(key);
     entries.push({name,size,url:''});
   };
-  for(const f of folders){const path=`${folder?'':f.date+'/'}${folderNames.get(f.id)}/`;
-    entries.push({name:path,size:0,url:null});
+  // One display name per address identity, even if road text differs by survey date.
+  const canonicalNames=new Map<string,string>();
+  for(const f of allFolders){const parts=addressParts(f);parts.forEach((part,i)=>{const key=JSON.stringify([f.region,...parts.slice(0,i+1).map(p=>p.key)]);if(part.label.length>(canonicalNames.get(key)?.length||0))canonicalNames.set(key,part.label);});}
+  const directories=new Set<string>();
+  for(const f of folders){
+    const sourceParts=addressParts(f);
+    const parts=sourceParts.map((p,i)=>safeFilename(canonicalNames.get(JSON.stringify([f.region,...sourceParts.slice(0,i+1).map(x=>x.key)]))||p.label));
+    const relative=parts.slice(folder?parts.length-1:Math.max(0,addressPath.length-1));
+    const path=view==='address'||view==='date'
+      ?[...(!region&&!folder?[safeFilename(f.region)]:[]),...(view==='date'&&!folder&&!addressPath.length?[f.date]:[]),...relative].join('/')+'/'
+      :`${folder?'':f.date+'/'}${folderNames.get(f.id)}/`;
+    if(!directories.has(path)){entries.push({name:path,size:0,url:null});directories.add(path);}
     for(const p of results.filter(p=>p.folder===f.id))addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);
   }
   const name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';

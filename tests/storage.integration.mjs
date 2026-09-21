@@ -307,6 +307,26 @@ try{
   const noReseed=(await(await request('/api/library')).json()).folders;assert.equal(noReseed.some(f=>f.region==='사직4구역'&&f.date==='2026-09-17'),false,'Deleted seed folders never regenerate');
   assert.ok(noReseed.some(f=>f.region==='연산2구역'),'Other regions survive');
   console.log('PASS: folder/date/region deletion, source scope, object cleanup, retry, racing uploads blocked, auth and no seed resurrection.');
+  // Address view aggregates original survey folders without creating date directories.
+  const addressRegion='주소보기검증';
+  const addressRow={lot:'명장동 300-089',unit:'한신아파트 2동 302호',time:'10:00',name:'검증',phones:[],address:'충렬대로 100',notes:'',group:1};
+  for(const day of ['2026-10-01','2026-10-02']){
+    const r=await manual({region:addressRegion,date:day,folders:[{...addressRow,address:day==='2026-10-01'?'':addressRow.address},{...addressRow,unit:'한신아파트 3동 302호'}],warnings:[]});assert.equal(r.status,201,await r.clone().text());
+  }
+  const addressFolders=(await(await request('/api/library')).json()).folders.filter(f=>f.region===addressRegion);
+  const target=addressFolders.find(f=>f.date==='2026-10-01'&&f.unit.includes('2동'));
+  const wanted=[];
+  for(const f of addressFolders){const r=await request('/api/library?folder='+f.id+'&filename=same.png',{method:'POST',body:png});assert.equal(r.status,201);const photo=(await r.json()).photo;if(f.unit.includes('2동'))wanted.push(photo.id);}
+  const grouped=await(await request('/api/library?view=address&folder='+target.id)).json();
+  assert.deepEqual(grouped.photos.map(p=>p.id).sort(),wanted.sort());
+  assert.equal((await(await request('/api/library?view=date&folder='+target.id)).json()).photos.length,1);
+  const manifest=await(await request('/api/export?view=address&region='+encodeURIComponent(addressRegion))).json();
+  assert.equal(manifest.files,4);assert.equal(new Set(manifest.entries.map(e=>e.name.split('/')[0])).size,1,'road aliases must not split a building in ZIP');assert.ok(manifest.entries.every(e=>!e.name.includes('2026-10-')));
+  assert.ok(manifest.entries.some(e=>e.name.includes('/2동/302호/')));assert.ok(manifest.entries.some(e=>e.name.includes('/3동/302호/')));
+  const leaf=await(await request('/api/export?view=address&folder='+target.id)).json();assert.equal(leaf.files,2);assert.ok(leaf.entries.every(e=>e.name.startsWith('302호/')));
+  const dated=await(await request('/api/export?view=date&region='+encodeURIComponent(addressRegion))).json();assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-01/')));assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-02/')));
+  assert.equal((await request('/api/export?view=address&path=invalid')).status,400);
+  console.log('PASS: address gallery combines dates, isolates blocks, and ZIP contains address/block/room with no date folders.');
   const newLogin=await login();const oldCookie=newLogin.headers.get('set-cookie').split(';')[0];
   const reset=await authRequest('/api/account',{...credentials,password:'changed-password-123'},{'x-admin-key':adminKey});assert.equal(reset.status,200);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:oldCookie}})).status,401,'Password reset revokes other devices');

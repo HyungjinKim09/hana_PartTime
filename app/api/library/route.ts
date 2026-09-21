@@ -1,3 +1,4 @@
+import {matchingAddress} from '@/lib/address-folders';
 import {listFolders,findFolder} from '@/lib/folders';
 import {ApiError,failure,identity,json,storage,limitedBody,imageType} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
@@ -5,13 +6,15 @@ import {budgetUsage} from '@/lib/r2-budget';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){try{
   const owner=await identity();const {db}=storage();
-  const folder=new URL(request.url).searchParams.get('folder');
-  const [folders,photos,usage]=await Promise.all([
-    listFolders(db,owner),
-    folder?db.prepare('SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail FROM photos WHERE owner=? AND folder=? AND deleted=0 ORDER BY created_at DESC,id DESC').bind(owner,folder).all().then(r=>r.results):Promise.resolve([]),
-    budgetUsage(db),
-  ]);
-  if(folder&&!folders.some(f=>f.id===folder))throw new ApiError('폴더를 찾을 수 없습니다.',404);
+  const params=new URL(request.url).searchParams,folder=params.get('folder');
+  const [folders,usage]=await Promise.all([listFolders(db,owner),budgetUsage(db)]);
+  const target=folders.find(f=>f.id===folder);
+  if(folder&&!target)throw new ApiError('폴더를 찾을 수 없습니다.',404);
+  const ids=target?(params.has('view')?matchingAddress(folders,target).filter(f=>params.get('view')==='address'||f.date===target.date):[target]).map(f=>f.id):[];
+  const photos:{created_at:string;id:string}[]=[];
+  // Keep D1 bind counts bounded even for a long survey history.
+  for(let i=0;i<ids.length;i+=80){const chunk=ids.slice(i,i+80);const result=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail FROM photos WHERE owner=? AND folder IN (${chunk.map(()=>'?').join(',')}) AND deleted=0 ORDER BY created_at DESC,id DESC`).bind(owner,...chunk).all();photos.push(...result.results as {created_at:string;id:string}[]);}
+  photos.sort((a,b)=>b.created_at.localeCompare(a.created_at)||b.id.localeCompare(a.id));
   return json({folders,photos,usage});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
