@@ -3,6 +3,13 @@ type Reading=Pick<Page,'text'|'blocks'>;
 const symbols=(data:Reading)=>(data.blocks||[]).flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words.flatMap(w=>w.symbols))));
 export async function refineMixedCell(primary:Reading,image:ImageLike,kind:'name'|'address',getEnglish:()=>Promise<Worker>,crop:(box:Bbox)=>Promise<ImageLike>,readPrefix?:(right:number)=>Promise<string>,readKorean?:()=>Promise<Reading>):Promise<{text:string;changed:boolean}>{
  const text=primary.text.trim();
+ // Tiny marks after a complete room number can be decoded as repeated o/O.
+ // Remove them only when an independent Korean pass confirms the entire prefix.
+ const trailingNoise=kind==='address'?text.match(/^(.*\d\s*호)\s*[oO]{2,4}\s*$/u):null;
+ if(trailingNoise&&readKorean){
+  const reread=(await readKorean()).text.trim().replace(/(\d\s*호)\s*(?:[oOㅇ]{2,4}|으)\s*$/u,'$1');
+  if(reread.replace(/\s/g,'')===trailingNoise[1].replace(/\s/g,''))return {text:trailingNoise[1].trim(),changed:true};
+ }
  // When mixed OCR turns the Korean 동 suffix into Latin (for example AF),
  // require a Korean reread plus a verified Latin block letter before repairing it.
  const missingBlock=kind==='address'?text.match(/([A-Za-z&^<>]{1,3})\s*(\d+\s*호)/):null;
