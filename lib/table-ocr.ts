@@ -72,6 +72,23 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
       const mixed=!!refine&&(column===2||column===5);
       const result=await worker.recognize(crop,{},mixed?{text:true,blocks:true}:{text:true});
       if(mixed){try{const corrected=await refine!(result.data,crop,column===2?'name':'address');if(corrected.changed)warnings.push(`일정 ${i+1}: ${column===2?'이름':'주소'}의 영문 표식을 별도로 확인해 보완했습니다. (${result.data.text.trim()} → ${corrected.text}) 원본과 비교해 주세요.`);return corrected.text;}catch{warnings.push(`일정 ${i+1}: 영문 보완 인식을 완료하지 못했습니다. ${column===2?'이름':'주소'}를 원본과 확인해 주세요.`);}}
+      if(column===4){
+        const original=result.data.text.trim().replace(/\s+/g,'');
+        // Mixed Korean/English OCR can read short Korean time labels as Latin.
+        // Confirm the phrase from the image; never map an arbitrary Latin token.
+        if(original&&!/\d/.test(original)&&!/^(오전중|오후중|아무때나)$/.test(original)){
+          try{
+            await worker.reinitialize('kor',1,{tessedit_load_sublangs:''} as Partial<import('tesseract.js').InitOptions>);
+            await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
+            const retry=(await worker.recognize(crop)).data.text.trim().replace(/\s+/g,'');
+            if(/^(오전중|오후중|아무때나)$/.test(retry))return retry;
+            warnings.push(`일정 ${i+1}: 방문시간을 원본과 확인해 주세요. (${original})`);
+          }finally{
+            await worker.reinitialize('kor+eng',1,{tessedit_load_sublangs:''} as Partial<import('tesseract.js').InitOptions>);
+            await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
+          }
+        }
+      }
       return result.data.text.trim();
     }
     let lotText=await cell(1),lot=readLotCell(lotText,region);
