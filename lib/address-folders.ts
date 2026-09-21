@@ -1,10 +1,11 @@
+import {buildingCategory} from './daily-report.ts';
 import type {Folder} from './types';
 import {normalizeRoadAddress} from './address.js';
 type Place=Pick<Folder,'id'|'region'|'lot'|'address'|'unit'|'unitDisplay'>;
 export type AddressPart={key:string;label:string};
 const clean=(s:string)=>s.normalize('NFKC').replace(/\s+/g,' ').trim();
 const token=(s:string)=>clean(s).replace(/\s/g,'').toLowerCase();
-export function addressParts(f:Place):AddressPart[]{
+export function addressParts(f:Place,categorized=false):AddressPart[]{
  const lot=clean(f.lot).replace(/(\d+)(?:\s*[-–−]\s*(\d+))?$/u,(_,a:string,b?:string)=>String(Number(a)).padStart(3,'0')+(b?'-'+String(Number(b)).padStart(3,'0'):''));
  const road=normalizeRoadAddress(f.address).match(/^(.*?(?:로|길)\s*\d+(?:-\d+)?)(?=\s|\(|$)/u)?.[1]||'';
  const detail=clean([f.unitDisplay||f.unit||'',f.address.replace(road,'')].join(' ')).replace(/[()]/g,' ');
@@ -21,12 +22,13 @@ export function addressParts(f:Place):AddressPart[]{
   const unit=[block&&block+'동',room&&room+'호'].filter(Boolean).join(' ');
   parts.push({key:'unit:'+token(unit),label:unit});
  }
- return parts;
+ const category=buildingCategory(f);
+ return categorized?[{key:'category:'+category,label:category},...parts]:parts;
 }
-export function withinAddress(f:Place,path:string[]){const parts=addressParts(f);return path.every((key,i)=>key==='@whole'?parts.length===i:parts[i]?.key===key);}
+export function withinAddress(f:Place,path:string[],categorized=false){const parts=addressParts(f,categorized);return path.every((key,i)=>key==='@whole'?parts.length===i:parts[i]?.key===key);}
 export function matchingAddress<T extends Place>(all:T[],target:Place):T[]{const key=JSON.stringify(addressParts(target).map(p=>p.key));return all.filter(f=>f.region===target.region&&JSON.stringify(addressParts(f).map(p=>p.key))===key);}
-export function addressNodes(folders:Folder[],path:string[]){
+export function addressNodes(folders:Folder[],path:string[],categorized=false){
  const nodes=new Map<string,{key:string;label:string;folders:Folder[];leaf:boolean}>();
- for(const f of folders){if(!withinAddress(f,path))continue;const parts=addressParts(f),part=parts[path.length]||{key:'@whole',label:'건물 전체·호수 미입력'};let node=nodes.get(part.key);if(!node){node={...part,folders:[],leaf:true};nodes.set(part.key,node);}if(part.label.length>node.label.length)node.label=part.label;node.folders.push(f);node.leaf&&=parts.length<=path.length+1;}
+ for(const f of folders){if(!withinAddress(f,path,categorized))continue;const parts=addressParts(f,categorized),part=parts[path.length]||{key:'@whole',label:'건물 전체·호수 미입력'};let node=nodes.get(part.key);if(!node){node={...part,folders:[],leaf:true};nodes.set(part.key,node);}if(part.label.length>node.label.length)node.label=part.label;node.folders.push(f);node.leaf&&=parts.length<=path.length+1;}
  return [...nodes.values()].sort((a,b)=>a.label.localeCompare(b.label,'ko',{numeric:true}));
 }

@@ -1,3 +1,4 @@
+import {addressParts} from '../lib/address-folders.ts';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
@@ -321,10 +322,13 @@ try{
   assert.deepEqual(grouped.photos.map(p=>p.id).sort(),wanted.sort());
   assert.equal((await(await request('/api/library?view=date&folder='+target.id)).json()).photos.length,1);
   const manifest=await(await request('/api/export?view=address&region='+encodeURIComponent(addressRegion))).json();
-  assert.equal(manifest.files,4);assert.equal(new Set(manifest.entries.map(e=>e.name.split('/')[0])).size,1,'road aliases must not split a building in ZIP');assert.ok(manifest.entries.every(e=>!e.name.includes('2026-10-')));
+  assert.equal(manifest.files,4);assert.ok(manifest.entries.every(e=>e.name.startsWith('구분건물/')));assert.equal(new Set(manifest.entries.map(e=>e.name.split('/')[1])).size,1,'road aliases must not split a building in ZIP');assert.ok(manifest.entries.every(e=>!e.name.includes('2026-10-')));
   assert.ok(manifest.entries.some(e=>e.name.includes('/2동/302호/')));assert.ok(manifest.entries.some(e=>e.name.includes('/3동/302호/')));
   const leaf=await(await request('/api/export?view=address&folder='+target.id)).json();assert.equal(leaf.files,2);assert.ok(leaf.entries.every(e=>e.name.startsWith('302호/')));
   const dated=await(await request('/api/export?view=date&region='+encodeURIComponent(addressRegion))).json();assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-01/')));assert.ok(dated.entries.some(e=>e.name.startsWith('2026-10-02/')));
+  const categoryPath=addressParts(target,true).map(p=>p.key);
+  const selectedManifest=await(await request('/api/export?'+new URLSearchParams({view:'address',region:addressRegion,path:JSON.stringify(categoryPath)}))).json();assert.equal(selectedManifest.files,2);assert.ok(selectedManifest.entries.every(e=>e.name.startsWith('302호/')));
+  const categoryOnly=await(await request('/api/export?'+new URLSearchParams({view:'address',region:addressRegion,path:JSON.stringify(['category:구분건물'])}))).json();assert.equal(categoryOnly.files,4);assert.ok(categoryOnly.entries.every(e=>e.name.startsWith('구분건물/')));
   assert.equal((await request('/api/export?view=address&path=invalid')).status,400);
   console.log('PASS: address gallery combines dates, isolates blocks, and ZIP contains address/block/room with no date folders.');
   const newLogin=await login();const oldCookie=newLogin.headers.get('set-cookie').split(';')[0];

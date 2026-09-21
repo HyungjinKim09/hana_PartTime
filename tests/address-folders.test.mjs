@@ -41,3 +41,12 @@ test('whole-building records remain reachable beside rooms with no building name
  const children=addressNodes([whole,room],[top.key]);
  assert.equal(children.length,2);assert.ok(children.some(n=>n.folders.some(f=>f.id==='a')));
 });
+test('address view starts with general/separate building categories; date view does not',()=>{
+ const general=f('g','망미동 123-1');const villa=f('v','망미동 937-29','만주골든빌 B동 201호');const apt=f('a','명장동 300-89','한신아파트 2동 302호');
+ const all=[general,villa,apt];const nodes=addressNodes(all,[],true);
+ assert.deepEqual(new Set(nodes.map(n=>n.label)),new Set(['일반건물','구분건물']));
+ const separate=nodes.find(n=>n.label==='구분건물');assert.equal(separate.folders.length,2);assert.equal(separate.leaf,false);
+ assert.equal(withinAddress(general,[separate.key],true),false);
+ assert.equal(addressParts(apt,true).length,4);assert.equal(addressParts(apt)[0].label.includes('구분건물'),false);
+ assert.equal(addressNodes(all,[separate.key],true).length,2);
+});
