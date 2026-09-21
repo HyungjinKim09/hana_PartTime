@@ -10,8 +10,15 @@ test('matches address/building/unit fragments ignoring spaces and lot padding',(
 });
 test('address results aggregate all dates, date results stay separate and honor supplied scope',()=>{
  const rows=[row('a','2026-09-17'),row('b','2026-09-18'),row('c','2026-09-18','만주골든빌 B동 202호')];
- const results=searchFolders(rows,'201호','address');assert.equal(results.length,1);assert.equal(results[0].count,4);assert.equal(results[0].folder.id,'b');
+ const results=searchFolders(rows,'201호','address');assert.equal(results.length,1);assert.equal(results[0].count,6);assert.equal(results[0].folder.id,'b');
  assert.equal(searchFolders(rows,'201호','date').length,2);
  assert.equal(searchFolders(rows.slice(0,1),'201호','address')[0].count,2);
- assert.equal(searchFolders(rows,'2026-09-17','address')[0].count,4);
+ assert.equal(searchFolders(rows,'2026-09-17','address')[0].count,6);
+});
+
+test('building search opens a single building folder, then its unit hierarchy',()=>{
+ const rows=[row('a','2026-09-17','영미주택 101호'),row('b','2026-09-18','영미주택 102호')];
+ const result=searchFolders(rows,'영미주택','address');assert.equal(result.length,1);assert.equal(result[0].leaf,false);assert.equal(result[0].path.length,2);assert.ok(!result[0].label.includes('101호'));
+ const child=searchFolders(rows,'101호','address',result[0].path);assert.equal(child.length,1);assert.equal(child[0].leaf,true);assert.equal(child[0].path.length,3);
+ const general=searchFolders([row('g','2026-09-17','')],'937','address');assert.equal(general[0].leaf,true);
 });
