@@ -8,7 +8,7 @@ export async function downloadArchive(query:URLSearchParams,signal:AbortSignal,o
   signal.throwIfAborted();
   const params=new URLSearchParams(query);
   if(!handle)params.set('maxBytes',String(256*1024*1024));
-  const response=await fetch('/api/export?'+params,{signal,cache:'no-store'});
+  const response=await fetch('/api/export?'+params,{method:'POST',signal,cache:'no-store'});
   const data=await response.json() as ExportManifest&{error?:string};
   if(!response.ok)throw new Error(data.error||'다운로드를 준비하지 못했습니다.');
   onProgress(0,data.totalBytes);

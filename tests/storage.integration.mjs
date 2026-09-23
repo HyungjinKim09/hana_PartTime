@@ -15,7 +15,7 @@ const adminKey='integration-test-only-admin-key-0123456789';
 const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],bindings:{ADMIN_SETUP_KEY:adminKey,SITE_DATA_OWNER:'test-owner'},cf:false});
 const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
 const other={cookie:'','oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
-const request=async(path,options={})=>{if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
+const request=async(path,options={})=>{if(/^\/api\/export(?:\?|$)/.test(path))options={...options,method:'POST',headers:{origin:'https://fieldnote.test',...options.headers}};if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
 const archiveRequest=async(path,options={})=>{
   const response=await request(path,options);if(!response.ok)return response;
   assert.match(response.headers.get('content-type'),/application\/json/,'ZIP CPU work runs on the client');
@@ -39,7 +39,7 @@ try{
     }
 
   }
-  for(const path of ['/api/library','/api/export','/api/photos/not-owned'])assert.equal((await mf.dispatchFetch('https://fieldnote.test'+path)).status,401,'Anonymous route '+path);
+  for(const path of ['/api/library','/api/export','/api/photos/not-owned'])assert.equal((await mf.dispatchFetch('https://fieldnote.test'+path,path==='/api/export'?{method:'POST',headers:{origin:'https://fieldnote.test'}}:{})).status,401,'Anonymous route '+path);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{method:'POST',body:'x'})).status,401);
   const authRequest=(path,body,extra={})=>request(path,{method:'POST',headers:{origin:'https://fieldnote.test','content-type':'application/json',...extra},body:JSON.stringify(body)});
   const credentials={username:'fieldteam',password:'test-password-12345'};
@@ -53,6 +53,8 @@ try{
   headers.cookie=setup.headers.get('set-cookie').split(';')[0];
   assert.equal((await db.prepare('SELECT owner FROM site_account').first()).owner,'test-owner','Original owner namespace is preserved');
   const storedAccount=await db.prepare('SELECT * FROM site_account').first();assert.notEqual(storedAccount.password_hash,credentials.password);assert.equal(storedAccount.password_hash.length,64);
+  assert.equal((await (await request('/api/library')).json()).folders.length,0,'New accounts do not receive personal seed data');
+  for(const [index,id] of ['158-22','147-85','159-25','158-27','158-23','143-12','158-8','159-4','159-29','159-12','158-59','159-15'].entries())await db.prepare("INSERT INTO survey_folders(owner,id,region,survey_date,lot,time,name,phones,address,notes,group_index,sort_index) VALUES(?,?,'사직4구역','2026-09-17',?,'10:00','가상 테스트 대상','[]','가상로 1','가상 일정',1,?)").bind('test-owner',id,'사직동 '+id,index).run();
   const initial=await (await request('/api/library')).json();
   assert.equal(initial.usage?.storageLimit,8_000_000_000,'The library exposes the enforced storage budget');
   assert.equal(initial.folders.length,12);assert.equal(initial.folders.reduce((n,f)=>n+f.count,0),0);
@@ -180,7 +182,7 @@ try{
   const unitCheck=spawnSync('python',['-c','import sys,io,zipfile;z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()));assert z.testzip() is None; folders=[n for n in z.namelist() if n.endswith("/")]; assert len(folders)==len(set(folders))==11; assert set(folders)=={f"2026-09-15/{i}호/" for i in range(201,212)}; photos=[n for n in z.namelist() if n.endswith("same.png")];assert len(photos)==2;assert len(set(n.rsplit("/",1)[0] for n in photos))==2; print("PASS: 11 same-lot units, stable reimport, separate photo directories in ZIP")'],{input:Buffer.from(await unitZip.arrayBuffer()),encoding:'utf8'});assert.equal(unitCheck.status,0,unitCheck.stderr);console.log(unitCheck.stdout.trim());
   const page=await request('/');assert.equal(page.status,200);assert.match(await page.text(),/현장조사 보관함/);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/report?region=test&date=2026-09-17')).status,401);
-  const updateRemarks=(id,values={},extra={})=>request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json',...extra},body:JSON.stringify({id,remarks:'보일러는 심야보일러까지 합쳐 4개.\n화분은 별도로 작성함.',buildingDetails:'1동3층',surveyStatus:'완료',...values})});
+  const updateRemarks=async(id,values={},extra={})=>request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json',...extra},body:JSON.stringify({id,revision:(await db.prepare('SELECT revision FROM survey_folders WHERE owner=? AND id=?').bind('test-owner',id).first())?.revision||1,remarks:'보일러는 심야보일러까지 합쳐 4개.\n화분은 별도로 작성함.',buildingDetails:'1동3층',surveyStatus:'완료',...values})});
   assert.equal((await updateRemarks('158-22',{}, {origin:'https://evil.test'})).status,403);
   assert.equal((await updateRemarks(unitFolders[0].id,{},other)).status,401);
   assert.equal((await updateRemarks('158-22',{surveyStatus:'승인'})).status,400);
@@ -258,7 +260,7 @@ try{
   const today=new Date().toISOString().slice(0,10);
   await db.prepare("INSERT INTO r2_operation_usage VALUES (?,'read',500000) ON CONFLICT(day,kind) DO UPDATE SET amount=500000").bind(today).run();
   assert.equal((await request('/api/photos/'+created[1].id)).status,429);
-  const deniedZip=await archiveRequest('/api/export');assert.equal(deniedZip.status,429);assert.match(deniedZip.headers.get('content-type'),/json/,'ZIP rejects before streaming');
+  const deniedManifest=await (await request('/api/export')).json();assert.equal((await request(deniedManifest.entries.find(e=>e.url).url)).status,429,'Read budget rejects original redemption');
   assert.equal((await request('/api/library')).status,200,'folder and usage view remains available');
   await db.prepare("INSERT INTO r2_operation_usage VALUES (?,'write',50000) ON CONFLICT(day,kind) DO UPDATE SET amount=50000").bind(today).run();
   assert.equal((await request('/api/library?folder=158-22&filename=blocked.png',{method:'POST',body:png})).status,429);
@@ -276,7 +278,7 @@ try{
   assert.equal((await (await request('/api/library?folder=158-22')).json()).photos.length,2,'Team uploads are visible to original user');
   assert.equal((await authRequest('/api/account',credentials,{...other,cookie:teamCookie})).status,403,'Shared account cannot reset credentials');
   assert.equal((await team('/api/session',{method:'DELETE',headers:{origin:'https://evil.test'}})).status,403);
-  assert.equal((await team('/api/session',{method:'DELETE'})).status,200);assert.equal((await team('/api/export')).status,401,'Logout revokes session');
+  assert.equal((await team('/api/session',{method:'DELETE'})).status,200);assert.equal((await team('/api/export',{method:'POST',headers:{origin:'https://fieldnote.test'}})).status,401,'Logout revokes session');
   const deleteScope=async(query,extra={})=>{let continuation;for(;;){const r=await request('/api/folders?'+query,{method:'DELETE',headers:{...extra,...(continuation?{'content-type':'application/json'}:{})},body:continuation?JSON.stringify(continuation):undefined});if(!r.ok)return r;const result=await r.clone().json();if(result.deleted)return r;continuation=result.continuation;assert.ok(continuation);}};
   assert.equal((await deleteScope('id=158-8',other)).status,401);
   assert.equal((await deleteScope('id=158-8',{origin:'https://evil.test'})).status,403);
@@ -333,6 +335,47 @@ try{
   const categoryOnly=await(await request('/api/export?'+new URLSearchParams({view:'address',region:addressRegion,path:JSON.stringify(['category:구분건물'])}))).json();assert.equal(categoryOnly.files,4);assert.ok(categoryOnly.entries.every(e=>e.name.startsWith('구분건물/')));
   assert.equal((await request('/api/export?view=address&path=invalid')).status,400);
   console.log('PASS: address gallery combines dates, isolates blocks, and ZIP contains address/block/room with no date folders.');
+  // Bulk selection must retain unselected schedules and their shared source.
+  const bulkRegion='일괄삭제검증';
+  assert.equal((await request('/api/schedules',{method:'POST',body:makeForm('2026-11-01',bulkRegion,'검증동 10-1')})).status,201);
+  assert.equal((await manual({region:bulkRegion,date:'2026-11-01',folders:[{...addressRow,lot:'검증동 10-2'}],warnings:[]})).status,201);
+  const bulkFolders=(await(await request('/api/library')).json()).folders.filter(f=>f.region===bulkRegion);
+  const bulkTarget=bulkFolders.find(f=>f.lot.includes('10-1')),bulkKeep=bulkFolders.find(f=>f.id!==bulkTarget.id);
+  const bulkIds=[bulkTarget.id,...addressFolders.filter(f=>f.unit.includes('2동')).map(f=>f.id)];
+  const bulkKeys=[];
+  for(let i=0;i<12;i++){
+    const photo=(await(await request('/api/library?folder='+bulkTarget.id+'&filename=bulk.png'+(i===0?'&kind=drawing':''),{method:'POST',body:png})).json()).photo;
+    bulkKeys.push((await db.prepare('SELECT object_key FROM photos WHERE id=?').bind(photo.id).first()).object_key);
+    if(i===0){
+      assert.equal((await request('/api/thumbnails?photo='+photo.id,{method:'PUT',body:thumb})).status,200);
+      bulkKeys.push((await db.prepare('SELECT thumbnail_key FROM photos WHERE id=?').bind(photo.id).first()).thumbnail_key);
+      assert.equal((await request('/api/drawings?photo='+photo.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:drawingDraft,revision:0})})).status,200);
+    }
+  }
+  const bulkCall=(method,body,extra={})=>request('/api/folders'+(method==='DELETE'?'?batch=1':''),{method,headers:{'Content-Type':'application/json',...extra},body:JSON.stringify(body)});
+  assert.equal((await bulkCall('POST',{ids:[]})).status,400);
+  assert.equal((await bulkCall('DELETE',{ids:[]})).status,400);
+  assert.equal((await bulkCall('POST',{ids:bulkIds},other)).status,401);
+  assert.equal((await bulkCall('DELETE',{ids:bulkIds},{origin:'https://evil.test'})).status,403);
+  const bulkPreview=await(await bulkCall('POST',{ids:[...bulkIds,bulkTarget.id]})).json();
+  assert.equal(bulkPreview.folders,3);assert.equal(bulkPreview.photos,14);assert.equal(bulkPreview.drawings,1);assert.equal(bulkPreview.sources,0);
+  const bytesBeforeBulk=(await(await request('/api/library')).json()).usage.storageBytes;
+  let bulkResult=await(await bulkCall('DELETE',{ids:bulkIds})).json();
+  assert.equal(bulkResult.deleted,false);assert.ok(bulkResult.remaining>0);
+  assert.equal((await request('/api/library?folder='+bulkTarget.id+'&filename=race.png',{method:'POST',body:png})).status,400);
+  while(!bulkResult.deleted){const r=await bulkCall('DELETE',bulkResult.continuation);assert.equal(r.status,200);bulkResult=await r.json();}
+  assert.equal((await bulkCall('DELETE',{ids:bulkIds})).status,200,'bulk retry is idempotent');
+  for(const key of bulkKeys)assert.equal(await rawBucket.get(key),null);
+  const afterBulk=await(await request('/api/library')).json();
+  assert.ok(afterBulk.usage.storageBytes<bytesBeforeBulk,'bulk cleanup releases accounted storage');
+  assert.ok(afterBulk.folders.some(f=>f.id===bulkKeep.id));
+  assert.ok(addressFolders.filter(f=>f.unit.includes('3동')).every(f=>afterBulk.folders.some(g=>g.id===f.id)));
+  assert.ok(bulkIds.every(id=>!afterBulk.folders.some(f=>f.id===id)));
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM schedule_imports WHERE region=?').bind(bulkRegion).first()).n,1);
+  const finalPreview=await(await bulkCall('POST',{ids:[bulkKeep.id]})).json();assert.equal(finalPreview.sources,1);
+  assert.equal((await bulkCall('DELETE',{ids:[bulkKeep.id]})).status,200);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM schedule_imports WHERE region=?').bind(bulkRegion).first()).n,0);
+  console.log('PASS: bulk preview, deduplicated selection, continuation, storage cleanup, unselected schedules and shared originals preserved.');
   const newLogin=await login();const oldCookie=newLogin.headers.get('set-cookie').split(';')[0];
   const reset=await authRequest('/api/account',{...credentials,password:'changed-password-123'},{'x-admin-key':adminKey});assert.equal(reset.status,200);
   assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:oldCookie}})).status,401,'Password reset revokes other devices');

@@ -1,7 +1,28 @@
-import {identity,storage,json,failure,limitedBody,imageType,ApiError} from '@/lib/storage';
-import {validateSchedule} from '@/lib/schedule-input';
-import {ensureLegacyFolders} from '@/lib/folders';
+import {identity,storage,json,failure,limitedBody,imageType,ApiError,requireSameOrigin} from '@/lib/storage';
+import {validateSchedule,validateScheduleEdit} from '@/lib/schedule-input';
+import {ensureLegacyFolders,findFolder,folderView,type FolderRow} from '@/lib/folders';
 import {safeFilename} from '@/lib/zip';
+
+export async function PATCH(request:Request){
+  try{
+    const owner=await identity(request);requireSameOrigin(request);const {db}=storage();
+    let draft;
+    const bytes=await limitedBody(request,64000);
+    try{draft=validateScheduleEdit(JSON.parse(new TextDecoder().decode(bytes)));}
+    catch{throw new ApiError('지역, 조사 날짜, 번지와 일정 내용을 확인해 주세요.');}
+    // One atomic update retains the folder ID, original files and survey records.
+    // OR IGNORE handles a concurrent move to the same unique schedule key.
+    const saved=await db.prepare(`UPDATE OR IGNORE survey_folders SET
+      region=?,survey_date=?,lot=?,unit=?,unit_display=?,time=?,name=?,phones=?,address=?,notes=?,revision=revision+1
+      WHERE owner=? AND id=? AND revision=? AND deleting=0 RETURNING *`)
+      .bind(draft.region,draft.date,draft.lot,draft.unit,draft.unitDisplay,draft.time,draft.name,JSON.stringify(draft.phones),draft.address,draft.notes,owner,draft.id,draft.revision).first<FolderRow>();
+    if(saved)return json({folder:folderView(saved)});
+    const latest=await findFolder(db,owner,draft.id);
+    if(!latest)throw new ApiError('일정을 찾을 수 없습니다. 삭제 여부를 확인해 주세요.',404);
+    if(latest.revision!==draft.revision)return json({code:'conflict',error:'다른 기기에서 수정한 내용이 있습니다. 최신 내용과 비교한 뒤 다시 저장해 주세요.',latest:folderView(latest)},409);
+    return json({code:'duplicate',error:'같은 지역·날짜·번지·건물·호수의 일정이 이미 있습니다. 날짜나 건물·호수를 확인해 주세요.'},409);
+  }catch(e){return failure(e);}
+}
 
 export async function POST(request:Request){
   try{

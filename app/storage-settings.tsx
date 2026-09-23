@@ -1,0 +1,9 @@
+"use client";
+import {useState} from 'react';
+import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import type {BudgetUsage} from '@/lib/r2-budget';
+export function StorageSettings({usage,onSaved}:{usage:BudgetUsage;onSaved:()=>Promise<void>}){
+ const [open,setOpen]=useState(false),[limit,setLimit]=useState('8'),[key,setKey]=useState(''),[ack,setAck]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ async function save(){setBusy(true);setError('');try{const r=await fetch('/api/settings',{method:'PUT',headers:{'content-type':'application/json','x-admin-key':key},body:JSON.stringify({storageGB:Number(limit),acknowledgeCost:ack})});const data=await r.json() as {error?:string};if(!r.ok)throw Error(data.error||'설정 실패');setKey('');setOpen(false);await onSaved();}catch(e){setError(e instanceof Error?e.message:'설정 실패');}finally{setBusy(false);}}
+ return <><button className="secondary-button" onClick={()=>{setLimit(String(usage.storageLimit/1e9));setError('');setAck(false);setOpen(true);}}>저장 한도 설정</button><Dialog open={open} onOpenChange={v=>{if(!busy){setOpen(v);if(!v)setKey('');}}}><DialogContent><DialogHeader><DialogTitle>저장 용량 한도</DialogTitle><DialogDescription>기본 한도는 8GB입니다. 이 설정은 앱의 업로드 중단 기준이며 Cloudflare 요금제를 변경하거나 전체 과금을 제한하지 않습니다.</DialogDescription></DialogHeader><label>최대 저장량 (GB)<input type="number" min="1" max="1000" step="1" value={limit} onChange={e=>setLimit(e.target.value)}/></label><label>관리 키<input type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)}/></label><label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>한도를 늘리면 저장 사용량에 따라 비용이 발생할 수 있음을 확인했습니다.</label>{error&&<p className="error-banner" role="alert">{error}</p>}<button className="primary-button" disabled={busy||!key} onClick={()=>void save()}>{busy?'저장 중…':'한도 저장'}</button></DialogContent></Dialog></>;
+}

@@ -1,6 +1,6 @@
 import app from 'vinext/server/fetch-handler';
 import {lookupSession} from '../lib/session-lookup';
-import {guardedBucket} from '../lib/r2-budget';
+import {guardedBucket,BudgetError} from '../lib/r2-budget';
 
 // Return the native R2 stream directly. Framework transport of binary bodies
 // adds per-chunk CPU cost, which can terminate large downloads on Workers Free.
@@ -20,7 +20,8 @@ export default {
       const object=await guardedBucket(env.DB,env.BUCKET).redeemDownload(user.owner,token);
       if(!object)return error('다운로드 준비가 만료되었거나 원본을 찾을 수 없습니다. ZIP 다운로드를 다시 시작해 주세요.',410);
       return new Response(object.body,{headers:{...headers,'Content-Type':'application/octet-stream','Content-Length':String(object.size)}});
-    }catch{
+    }catch(cause){
+      if(cause instanceof BudgetError)return error(cause.message,cause.status);
       return error('원본을 받지 못했습니다. ZIP 다운로드를 다시 시도해 주세요.',503);
     }
   },

@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import {testRuntime,png} from './test-runtime.mjs';
+const t=await testRuntime();
+try{
+ await t.folder();
+ const id=crypto.randomUUID(),options={method:'POST',headers:{'x-upload-id':id},body:png};
+ const first=await t.request('/api/library?folder=fixture&filename=test.png',options);
+ assert.equal(first.status,201);const saved=(await first.json()).photo;
+ const retry=await t.request('/api/library?folder=fixture&filename=test.png',options);
+ assert.equal(retry.status,200);assert.equal((await retry.json()).photo.id,saved.id);
+ assert.equal((await t.db.prepare('SELECT COUNT(*) AS n FROM photos').first()).n,1);
+ const writes=(await t.db.prepare("SELECT SUM(amount) AS n FROM r2_operation_usage WHERE kind='write'").first()).n;assert.equal(writes,1);
+ const changed=await t.request('/api/library?folder=fixture&filename=test.png',{...options,body:Buffer.concat([png,Buffer.from('different')])});assert.equal(changed.status,409);
+ const secondId=crypto.randomUUID();
+ const parallel=await Promise.all(Array.from({length:3},()=>t.request('/api/library?folder=fixture&filename=parallel.png',{...options,headers:{'x-upload-id':secondId}})));
+ assert.equal(parallel.filter(r=>r.status===201).length,1);assert.ok(parallel.every(r=>[200,201,409].includes(r.status)));
+ const stale={id:'fixture',revision:1,remarks:'',buildingDetails:'',surveyStatus:'완료'};
+ const patch=data=>t.request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(data)});
+ const a=await patch(stale);assert.equal(a.status,200);assert.equal((await a.json()).revision,2);
+ const b=await patch({...stale,remarks:'두 번째 기기',surveyStatus:'미완료'});assert.equal(b.status,409);
+ assert.equal((await t.db.prepare('SELECT survey_status FROM survey_folders WHERE id=?').bind('fixture').first()).survey_status,'완료');
+ await t.request('/api/library?id='+saved.id,{method:'DELETE'});
+ const deleted=await t.request('/api/library?folder=fixture&filename=test.png',options);assert.equal(deleted.status,410);
+ const existing=await t.db.prepare('SELECT object_key FROM photos LIMIT 1').first(),orphan='photos/synthetic-owner/orphan/old',fresh='photos/synthetic-owner/fresh/new';
+ await (await t.mf.getR2Bucket('BUCKET')).put(orphan,png);
+ await t.db.prepare('INSERT INTO r2_object_usage VALUES(?,?)').bind(orphan,png.length).run();
+ for(const [key,stamp] of [[existing.object_key,0],[orphan,0],[fresh,Date.now()]])await t.db.prepare('INSERT INTO upload_attempts VALUES(?,?,?,?)').bind(key,t.owner,'old-attempt',stamp).run();
+ const cleanup=await t.request('/api/maintenance',{method:'POST'});assert.equal(cleanup.status,200);assert.equal((await cleanup.json()).removed,1);
+ assert.equal(await (await t.mf.getR2Bucket('BUCKET')).get(orphan),null);assert.ok(await (await t.mf.getR2Bucket('BUCKET')).get(existing.object_key));
+ assert.ok(await t.db.prepare('SELECT * FROM upload_attempts WHERE object_key=?').bind(fresh).first(),'live upload is retained');
+ console.log('PASS: response-loss retry, content mismatch, concurrent claims, deleted receipt and edit conflict');
+}finally{await t.close();}

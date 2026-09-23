@@ -49,7 +49,7 @@ export async function refineMixedCell(primary:Reading,image:ImageLike,kind:'name
  }
  const base=symbols(primary),edits:{start:number;end:number;value:string}[]=[];let cursor=0;
  for(const match of blocks){
-  let index=base.findIndex((s,i)=>i>=cursor&&base.slice(i,i+match[1].length).map(x=>x.text).join('')===match[1]&&base[i+match[1].length]?.text==='동');if(index<0)continue;cursor=index+match[1].length+1;
+  const index=base.findIndex((s,i)=>i>=cursor&&base.slice(i,i+match[1].length).map(x=>x.text).join('')===match[1]&&base[i+match[1].length]?.text==='동');if(index<0)continue;cursor=index+match[1].length+1;
   const box=base[index].bbox;
   const candidate=english.filter(s=>Math.abs(s.bbox.x0-box.x0)<Math.max(5,(box.y1-box.y0)*.35)&&s.bbox.y0<box.y1&&s.bbox.y1>box.y0).sort((a,b)=>Math.abs(a.bbox.x0-box.x0)-Math.abs(b.bbox.x0-box.x0))[0];
   const letter=await verify(candidate);if(letter)edits.push({start:match.index!,end:match.index!+match[0].length,value:letter+'동'});

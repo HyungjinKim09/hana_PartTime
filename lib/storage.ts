@@ -2,6 +2,9 @@ import {env} from 'cloudflare:workers';
 import {sessionUser} from './site-auth';
 import {BudgetError,guardedBucket} from './r2-budget';
 export class ApiError extends Error { constructor(message:string,public status=400){super(message);} }
+export function requireSameOrigin(request:Request){
+  if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')throw new ApiError('허용되지 않은 요청입니다.',403);
+}
 export async function identity(request?:Request) {
   const user=await sessionUser();
   if(!user) throw new ApiError('로그인 후 다시 시도해 주세요.',401);

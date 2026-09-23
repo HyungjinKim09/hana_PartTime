@@ -1,11 +1,15 @@
 import {addressParts,matchingAddress,withinAddress} from '@/lib/address-folders';
 import {listFolders} from '@/lib/folders';
 import {exportFolderLabel} from '@/lib/daily-report';
-import {ApiError,failure,identity,storage,json} from '@/lib/storage';
+import {ApiError,failure,identity,storage,json,requireSameOrigin} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
+import {archiveParts} from '@/lib/archive-parts';
+import {sha256} from '@/lib/backup-format';
 export const dynamic='force-dynamic';
-export async function GET(request:Request){try{
-  const owner=await identity();const {db,bucket}=storage();const params=new URL(request.url).searchParams;
+export function GET(){return json({error:'다운로드 버튼에서 다시 시작해 주세요.'},405);}
+export async function POST(request:Request){try{
+  requireSameOrigin(request);
+  const owner=await identity(request);const {db,bucket}=storage();const params=new URL(request.url).searchParams;
   const folder=params.get('folder'),region=params.get('region'),date=params.get('date');
   const allFolders=await listFolders(db,owner);
   const folderNames=new Map<string,string>();const used=new Set<string>();
@@ -23,12 +27,11 @@ export async function GET(request:Request){try{
   if(view==='address'&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
   if(view==='address')folders=folders.filter(f=>withinAddress(f,addressPath,view==='address'));
   if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
-  const {results}=await db.prepare("SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND deleted=0 AND kind='photo' ORDER BY created_at,id").bind(owner).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
-  const entries:{name:string;size:number;url:string|null}[]=[];
-  const downloadKeys:string[]=[];
+  const {results}=await db.prepare("SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND folder IN(SELECT value FROM json_each(?)) AND deleted=0 AND kind='photo' ORDER BY created_at,id").bind(owner,JSON.stringify(folders.map(f=>f.id))).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
+  let entries:{name:string;size:number;url:string|null;key?:string}[]=[];
+  const byFolder=new Map<string,typeof results>();for(const photo of results){const rows=byFolder.get(photo.folder)||[];rows.push(photo);byFolder.set(photo.folder,rows);}
   const addOriginal=(name:string,key:string,size:number)=>{
-    downloadKeys.push(key);
-    entries.push({name,size,url:''});
+    entries.push({name,size,url:'',key});
   };
   // One display name per address identity, even if road text differs by survey date.
   const canonicalNames=new Map<string,string>();
@@ -42,14 +45,22 @@ export async function GET(request:Request){try{
       ?[...(!region&&!folder?[safeFilename(f.region)]:[]),...relative].join('/')+'/'
       :`${folder?'':f.date+'/'}${folderNames.get(f.id)}/`;
     if(!directories.has(path)){entries.push({name:path,size:0,url:null});directories.add(path);}
-    for(const p of results.filter(p=>p.folder===f.id))addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);
+    for(const p of byFolder.get(f.id)||[])addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);
   }
-  const name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';
+  let name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';
+  if(params.has('parts')||params.has('part')){
+    const snapshot=await sha256(new TextEncoder().encode(JSON.stringify(entries))),parts=archiveParts(entries);
+    if(params.has('parts'))return json({snapshot,parts:parts.map((p,index)=>({index,bytes:p.reduce((n,e)=>n+e.size,0),files:p.filter(e=>e.key).length}))});
+    if(params.get('snapshot')!==snapshot)throw new ApiError('사진 목록이 변경됐습니다. 나눠 받기 목록을 새로 확인해 주세요.',409);
+    const part=params.get('part')!;if(!/^\d+$/.test(part)||!parts[Number(part)])throw new ApiError('ZIP 분할 번호를 확인해 주세요.');
+    entries=parts[Number(part)];name=name.replace(/\.zip$/,`_${Number(part)+1}of${parts.length}.zip`);
+  }
+  const downloadKeys=entries.filter(e=>e.key).map(e=>e.key!);
   const totalBytes=entries.reduce((sum,entry)=>sum+entry.size,0);
   const maxBytes=params.get('maxBytes');
   if(maxBytes!==null&&(!/^\d+$/.test(maxBytes)||!Number.isSafeInteger(Number(maxBytes))))throw new ApiError('다운로드 크기를 확인해 주세요.');
   if(maxBytes!==null&&totalBytes>Number(maxBytes))throw new ApiError('이 브라우저에서는 한 번에 256MB까지 ZIP을 만들 수 있습니다. 날짜·폴더별로 나누거나 PC Chrome·Edge에서 다운로드해 주세요.',413);
   const tokens=await bucket.issueDownloads(owner,downloadKeys);let index=0;
   for(const entry of entries)if(entry.url!==null)entry.url='/api/export/'+tokens[index++];
-  return json({name,entries,totalBytes,files:downloadKeys.length});
+  return json({name,entries:entries.map(({name,size,url})=>({name,size,url})),totalBytes,files:downloadKeys.length});
 }catch(e){return failure(e);}}

@@ -24,13 +24,15 @@ export async function reserveOperations(db:D1Database,kind:Operation,count:numbe
 export async function budgetUsage(db:D1Database,now=new Date()){
   const {since}=dates(now);
   const results=await db.batch<{bytes?:number;kind?:string;amount?:number}>([
-    db.prepare('SELECT bytes FROM r2_storage_usage WHERE id=1'),
+    db.prepare('SELECT bytes,(SELECT storage_limit FROM app_settings WHERE id=1) AS storage_limit FROM r2_storage_usage WHERE id=1'),
     db.prepare('SELECT kind,SUM(amount) AS amount FROM r2_operation_usage WHERE day>=? GROUP BY kind').bind(since),
   ]);
   const storage=results[0].results[0]?.bytes;
   if(typeof storage!=='number')throw new Error('Missing storage budget');
   const amount=(kind:Operation)=>Number(results[1].results.find(r=>r.kind===kind)?.amount||0);
-  return {storageBytes:storage,storageLimit:R2_LIMITS.storage,reads:amount('read'),readLimit:R2_LIMITS.read,writes:amount('write'),writeLimit:R2_LIMITS.write,windowDays:32};
+  const storageLimit=(results[0].results[0] as {storage_limit?:number})?.storage_limit;
+  if(typeof storageLimit!=='number')throw new Error('Missing storage limit');
+  return {storageBytes:storage,storageLimit,reads:amount('read'),readLimit:R2_LIMITS.read,writes:amount('write'),writeLimit:R2_LIMITS.write,windowDays:32};
 }
 export type BudgetUsage=Awaited<ReturnType<typeof budgetUsage>>;
 export function guardedBucket(db:D1Database,bucket:R2Bucket){
@@ -43,9 +45,9 @@ export function guardedBucket(db:D1Database,bucket:R2Bucket){
     async put(key:string,bytes:Uint8Array,options:R2PutOptions){
       await reserveOperations(db,'write',1);
       const reserved=await db.prepare(`INSERT INTO r2_object_usage (object_key,size)
-        SELECT ?,? WHERE (SELECT bytes FROM r2_storage_usage WHERE id=1)+?<=? RETURNING object_key`)
-        .bind(key,bytes.byteLength,bytes.byteLength,R2_LIMITS.storage).first();
-      if(!reserved)throw new BudgetError('저장 용량 한도(8GB)에 도달했습니다. 기기에 원본을 보관하고, 불필요한 사진을 직접 삭제한 뒤 다시 올려 주세요.');
+        SELECT ?,? WHERE (SELECT bytes FROM r2_storage_usage WHERE id=1)+?<=(SELECT storage_limit FROM app_settings WHERE id=1) RETURNING object_key`)
+        .bind(key,bytes.byteLength,bytes.byteLength).first();
+      if(!reserved)throw new BudgetError('설정된 저장 용량 한도에 도달했습니다. 자료를 백업·정리하거나 관리자에게 한도 변경을 요청해 주세요.');
       try{return await bucket.put(key,bytes,options);}
       catch(error){
         // A failed PUT may have reached R2. Retain the reservation if cleanup fails.
@@ -59,7 +61,6 @@ export function guardedBucket(db:D1Database,bucket:R2Bucket){
     },
     delete:remove,
     async issueDownloads(owner:string,keys:string[]){
-      await reserveOperations(db,'read',keys.length);
       const now=Date.now();
       const tickets=keys.map(key=>({token:crypto.randomUUID(),key}));
       await db.batch([
@@ -71,10 +72,11 @@ export function guardedBucket(db:D1Database,bucket:R2Bucket){
       return tickets.map(t=>t.token);
     },
     async redeemDownload(owner:string,token:string){
-      // Delete/RETURNING is atomic: one prepaid R2 GET, even across concurrent devices.
+      // Consume the ticket atomically; charge only when an original is requested.
       const ticket=await db.prepare('DELETE FROM r2_download_tickets WHERE token=? AND owner=? AND expires_at>? RETURNING object_key')
         .bind(token,owner,Date.now()).first<{object_key:string}>();
       if(!ticket)return null;
+      await reserveOperations(db,'read',1);
       return bucket.get(ticket.object_key);
     },
     async reserveDownloads(keys:string[]){
