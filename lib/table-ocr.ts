@@ -36,8 +36,11 @@ export function tableLines(image:ScanImage){
   const ys:number[]=[];
   for(let y=0;y<h;y++){let run=0,best=0;for(let x=0;x<w;x++){run=dark(x,y)?run+1:0;best=Math.max(best,run);}if(best>w*.48)ys.push(y);}
   const merge=(values:number[])=>{const groups:number[][]=[];for(const v of values){const last=groups.at(-1);if(last&&v-last.at(-1)!<8)last.push(v);else groups.push([v]);}return groups.map(g=>Math.round((g[0]+g[g.length-1])/2));};
-  const rows=merge(ys);if(rows.length<4)return null;
-  const first=rows[0],last=rows[rows.length-1],xs:number[]=[];
+  // Three rules enclose a header and one schedule row.
+  const rows=merge(ys);if(rows.length<3)return null;
+  // The merged address/notes header has no middle divider. Measure vertical
+  // coverage only within data rows so short tables still split those cells.
+  const first=rows[1],last=rows[rows.length-1],xs:number[]=[];
   for(let x=0;x<w;x++){let count=0;for(let y=first;y<=last;y++)if(dark(x,y))count++;if(count>(last-first)*.65)xs.push(x);}
   const cols=merge(xs);if(cols.length<5)return null;
   // This is the numbered survey table layout: narrow number column, then lot.

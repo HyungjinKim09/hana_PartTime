@@ -2,7 +2,8 @@ import {identifyUpload,uploadId} from './upload-id.ts';
 export type PendingUpload={key:string;owner:string;id:string;folder:string;kind:'photo'|'drawing';file:File;createdAt:number};
 export const PENDING_LIMIT_BYTES=512*1024*1024,PENDING_LIMIT_COUNT=200;
 const eventName='hana-pending-uploads';
-function notify(){if(typeof window!=='undefined')window.dispatchEvent(new Event(eventName));}
+let notification:ReturnType<typeof setTimeout>|undefined;
+function notify(){if(typeof window!=='undefined'){clearTimeout(notification);notification=setTimeout(()=>window.dispatchEvent(new Event(eventName)),150);}}
 function open(){return new Promise<IDBDatabase>((resolve,reject)=>{
  if(typeof indexedDB==='undefined'){reject(Error('이 브라우저에서는 사진 임시 보관을 사용할 수 없습니다. 원본을 기기에 따로 보관해 주세요.'));return;}
  const request=indexedDB.open('hana-pending-originals',1);
@@ -26,5 +27,7 @@ export async function savePending(owner:string,folder:string,kind:'photo'|'drawi
  }finally{db.close();}
 }
 export async function listPending(owner:string){const db=await open();try{return await new Promise<PendingUpload[]>((resolve,reject)=>{const tx=db.transaction('photos'),request=tx.objectStore('photos').getAll();request.onsuccess=()=>resolve((request.result as PendingUpload[]).filter(r=>r.owner===owner).sort((a,b)=>a.createdAt-b.createdAt).map(r=>({...r,file:identifyUpload(r.file,r.id)})));request.onerror=()=>reject(request.error);});}finally{db.close();}}
-export async function deletePending(owner:string,id:string){const db=await open();try{await new Promise<void>((resolve,reject)=>{const tx=db.transaction('photos','readwrite');tx.objectStore('photos').delete(owner+':'+id);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});notify();}finally{db.close();}}
+export async function countPending(owner:string){const db=await open();try{return await new Promise<number>((resolve,reject)=>{const request=db.transaction('photos').objectStore('photos').getAllKeys();request.onsuccess=()=>resolve(request.result.filter(key=>typeof key==='string'&&key.startsWith(owner+':')).length);request.onerror=()=>reject(request.error);});}finally{db.close();}}
+export async function deletePendingMany(owner:string,ids:string[]){if(!ids.length)return;const db=await open();try{await new Promise<void>((resolve,reject)=>{const tx=db.transaction('photos','readwrite'),store=tx.objectStore('photos');for(const id of new Set(ids))store.delete(owner+':'+id);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});notify();}finally{db.close();}}
+export function deletePending(owner:string,id:string){return deletePendingMany(owner,[id]);}
 export function watchPending(callback:()=>void){window.addEventListener(eventName,callback);return()=>window.removeEventListener(eventName,callback);}

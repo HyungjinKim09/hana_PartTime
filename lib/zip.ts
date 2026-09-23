@@ -54,7 +54,7 @@ async function* zipChunks(entries: ZipEntry[]): AsyncGenerator<Uint8Array> {
   const locator=block(20); locator.view.setUint32(0,0x07064b50,true); locator.view.setBigUint64(8,offset,true); locator.view.setUint32(16,1,true); yield locator.bytes;
   const end=block(22); end.view.setUint32(0,0x06054b50,true); end.view.setUint16(8,0xffff,true); end.view.setUint16(10,0xffff,true); end.view.setUint32(12,0xffffffff,true); end.view.setUint32(16,0xffffffff,true); yield end.bytes;
 }
-export function createZipStream(entries:ZipEntry[]):ReadableStream<Uint8Array> {
+export function createZipStream(entries:ZipEntry[]&{dispose?:()=>void}):ReadableStream<Uint8Array> {
   const iterator=zipChunks(entries);
-  return new ReadableStream({async pull(controller){try{const next=await iterator.next(); if(next.done) controller.close(); else controller.enqueue(next.value);}catch(error){controller.error(error);}},async cancel(){await iterator.return(undefined);}});
+  return new ReadableStream({async pull(controller){try{const next=await iterator.next(); if(next.done){entries.dispose?.();controller.close();}else controller.enqueue(next.value);}catch(error){entries.dispose?.();controller.error(error);}},async cancel(){entries.dispose?.();await iterator.return(undefined);}});
 }

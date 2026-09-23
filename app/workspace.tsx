@@ -3,7 +3,8 @@ import Link from 'next/link';
 import {PendingUploads} from './pending-uploads';
 import {StorageSettings} from './storage-settings';
 import {BackupTools} from './backup-tools';
-import {savePending,deletePending} from '@/lib/pending-uploads';
+import {savePending,deletePendingMany} from '@/lib/pending-uploads';
+import {prepareUploadBatches} from '@/lib/upload-preparation';
 import {uploadId} from '@/lib/upload-id';
 import {lazy,Suspense,useCallback,useEffect,useRef,useState} from 'react';
 import {Pencil,Plus,Archive,ArrowLeft,ArrowDownToLine,Camera,Check,ChevronRight,Clock,CloudUpload,Folder as FolderIcon,FolderOpen,Image as ImageIcon,LockKeyhole,MapPin,Phone,RefreshCw,TriangleAlert,Trash2,UserRound,MoreHorizontal,ChevronDown,FileText} from 'lucide-react';
@@ -97,15 +98,17 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     uploadLock.current=true;const uploadTask=new AbortController();activeUpload.current=uploadTask;
     const target=selected,kind=mediaKind;setUploading(true);setFailed([]);setProgress({done:0,total:files.length});
     pending.current?.abort();sequence.current++;setLoading(false);
+    const confirmed:string[]=[];let preparation:ReturnType<typeof prepareUploadBatches>|undefined;
     try{
-      await savePending(storageScope,target,kind,files).catch(()=>toast.warning('이 기기에 임시 보관하지 못했습니다. 서버 저장이 끝날 때까지 화면을 열어 두세요. 실패한 사진은 원본을 내려받아 보관할 수 있습니다.'));
       const entries=uploadPreviews.begin(files,target,kind);
+      const prepared=prepareUploadBatches(files,batch=>savePending(storageScope,target,kind,batch));preparation=prepared;let warned=false;
       const result=await uploadPhotos(files,target,kind,{
         signal:uploadTask.signal,
+        beforeUpload:async(_file,index)=>{const error=await prepared.ready[index];if(error&&!warned){warned=true;toast.warning('이 기기에 임시 보관하지 못했습니다. 서버 저장이 끝날 때까지 화면을 열어 두세요. 실패한 사진은 원본을 내려받아 보관할 수 있습니다.');}},
         onStart:(_file,index)=>uploadPreviews.patch(entries[index].key,{status:'uploading'}),
-        onSaved:async(file,photo,index,elapsedMs)=>{
+        onSaved:(file,photo,index,elapsedMs)=>{
+          confirmed.push(uploadId(file));
           uploadPreviews.patch(entries[index].key,{status:'saved',photo,elapsedMs});
-          await deletePending(storageScope,uploadId(file)).catch(()=>toast.warning('서버 저장은 완료됐지만 기기 임시 보관을 정리하지 못했습니다. 미전송 목록에서 재확인해 주세요.'));
           setPhotos(previous=>[photo,...previous.filter(item=>item.id!==photo.id)]);
           setFolders(previous=>previous.map(folder=>folder.id===target?{...folder,count:folder.count+1,bytes:folder.bytes+photo.size}:folder));
         },
@@ -118,6 +121,8 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
       if(result.saved)toast.success(`${result.saved}장 저장 완료`);
       return result.failed;
     }catch(e){toast.error(e instanceof Error?e.message:'사진을 임시 보관하지 못했습니다.');setFailed(fromCamera?[]:files);return files;}finally{
+      await preparation?.done;
+      await deletePendingMany(storageScope,confirmed).catch(()=>toast.warning('서버 저장은 완료됐지만 기기 임시 보관을 정리하지 못했습니다. 미전송 목록에서 재확인해 주세요.'));
       if(input.current)input.current.value='';
       activeUpload.current=null;uploadLock.current=false;setUploading(false);
     }
@@ -242,7 +247,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     </div>
     <Dialog open={actionPanel!==null} onOpenChange={open=>{if(!open)setActionPanel(null);}}><DialogContent className="workspace-action-dialog"><DialogHeader><DialogTitle>{actionPanel==='add'?'일정 추가':'폴더 작업'}</DialogTitle><DialogDescription>{actionPanel==='add'?'일정표 사진을 등록하거나 직접 입력하세요.':'현재 폴더의 일정과 보고서를 관리합니다.'}</DialogDescription></DialogHeader><div className="action-list"><button className={actionPanel==='more'?'secondary-button desktop-workspace-action':'secondary-button'} disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(false);setImporting(true);}}><CloudUpload size={19}/><span>일정표 사진 등록<small>사진에서 일정을 인식해 추가</small></span></button><button className="secondary-button" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(true);setImporting(true);}}><Plus size={19}/><span>일정 직접 입력<small>추가 방문 일정도 바로 등록</small></span></button>{actionPanel==='more'&&<><button className="secondary-button mobile-workspace-action" disabled={loading||uploading||!!error} onClick={()=>{setActionPanel(null);setExportScope(active?.id??null);}}><ArrowDownToLine size={19}/><span>다운로드<small>현재 폴더의 현장 사진 내려받기</small></span></button>{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={loading||uploading} onClick={()=>{setActionPanel(null);void refresh(selected);}}><RefreshCw size={18}/>새로고침</button>{region&&(!addressPath.length||active)&&<button className="secondary-button danger-action" disabled={loading||uploading||remarksDirty||folderDeleteBusy||cameraPending} onClick={()=>{setActionPanel(null);setFolderDelete(true);}}><Trash2 size={18}/>{active?'선택 일정 삭제':'폴더 삭제'}</button>}</>}</div></DialogContent></Dialog>
     <Dialog open={!!preview} onOpenChange={open=>{if(!open)setPreview(null);}}><DialogContent className="photo-dialog"><DialogHeader><DialogTitle>{preview?.filename}</DialogTitle><DialogDescription>원본 사진 · {preview&&formatBytes(preview.size)}</DialogDescription></DialogHeader>{preview&&(preview.content_type==='image/heic'?<p>이 브라우저에서는 HEIC 미리보기를 지원하지 않을 수 있어요. 원본을 내려받아 확인해 주세요.</p>:<img className="large-preview" src={localPhotos.get(preview.id)?.url||'/api/photos/'+preview.id} alt={preview.filename}/>)}{preview&&<a className="secondary-button" href={'/api/photos/'+preview.id+'?download=1'} download><ArrowDownToLine size={17}/>원본 다운로드</a>}</DialogContent></Dialog>
-    <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>{exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+(f.photoCount??f.count),0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+(f.photoBytes??f.bytes),0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{view==='address'?'일반건물·구분건물 / 주소 / 동·호수 / 사진 (날짜 폴더 없음)':'날짜 / 기존 일정 폴더 / 사진'}</div><p className="export-help">현재 보기의 폴더 구조로 현장 사진만 내려받습니다. 주소별 보기에서는 날짜 폴더 없이 같은 주소의 사진을 모읍니다. 파일명에 고유번호를 붙여 사진을 모두 보존합니다.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
+    <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>전체 {exportItems.length}개 일정 폴더 · {exportItems.reduce((n,f)=>n+(f.photoCount??f.count),0)}장 · {formatBytes(exportItems.reduce((n,f)=>n+(f.photoBytes??f.bytes),0))}</p></div></div><div className="export-path"><FolderIcon size={17}/>{view==='address'?'일반건물·구분건물 / 주소 / 동·호수 / 사진 (날짜 폴더 없음)':'날짜 / 기존 일정 폴더 / 사진'}</div><p className="export-help">현재 보기의 폴더 구조로 현장 사진만 내려받습니다. 주소별 보기에서는 날짜 폴더 없이 같은 주소의 사진을 모읍니다. 파일명에 고유번호를 붙여 사진을 모두 보존합니다.</p><ArchiveDownload name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} folderCounts={{total:exportItems.length,withPhotos:exportItems.filter(f=>(f.photoCount??0)>0).length}} onComplete={()=>void refresh(selected,true)}/></DialogContent></Dialog>
     {drawingPhoto&&<Suspense fallback={<div role="status">도면 편집기를 불러오는 중…</div>}><DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/></Suspense>}
     {editingSchedule&&<EditSchedule key={editingSchedule.id} folder={editingSchedule} onClose={()=>setEditingSchedule(null)} onSaved={async updated=>{
       setFolders(previous=>previous.map(f=>f.id===updated.id?{...f,...updated,count:f.count,bytes:f.bytes,photoCount:f.photoCount,photoBytes:f.photoBytes,drawingCount:f.drawingCount}:f));

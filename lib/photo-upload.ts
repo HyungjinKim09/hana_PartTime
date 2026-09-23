@@ -5,6 +5,7 @@ type UploadOptions={
   request?:typeof fetch;
   signal?:AbortSignal;
   timeoutMs?:number;
+  beforeUpload?:(file:File,index:number)=>Promise<unknown>;
   onStart?:(file:File,index:number)=>void;
   onSaved?:(file:File,photo:Photo,index:number,elapsedMs:number)=>void|Promise<void>;
   onProgress?:(completed:number,total:number)=>void;
@@ -23,10 +24,13 @@ export async function uploadPhotos(files:File[],folder:string,kind:'photo'|'draw
       const controller=new AbortController();
       const abort=()=>controller.abort(options.signal?.reason);
       options.signal?.addEventListener('abort',abort,{once:true});
-      const timer=setTimeout(()=>controller.abort(new DOMException('전송 시간이 초과됐습니다. 같은 사진으로 다시 시도해 주세요.','TimeoutError')),options.timeoutMs??180000);
+      let timer:ReturnType<typeof setTimeout>|undefined;
       try{
         if(options.signal?.aborted)abort();controller.signal.throwIfAborted();
         if(file.size>20*1024*1024)throw Error('한 장당 20MB까지 올릴 수 있어요.');
+        if(options.beforeUpload)await options.beforeUpload(file,index);
+        controller.signal.throwIfAborted();
+        timer=setTimeout(()=>controller.abort(new DOMException('전송 시간이 초과됐습니다. 같은 사진으로 다시 시도해 주세요.','TimeoutError')),options.timeoutMs??180000);
         options.onStart?.(file,index);
         const response=await request(`/api/library?folder=${encodeURIComponent(folder)}&filename=${encodeURIComponent(file.name)}&kind=${kind}`,{
           method:'POST',headers:{'Content-Type':file.type||'application/octet-stream','X-Upload-Id':uploadId(file)},body:file,signal:controller.signal,
