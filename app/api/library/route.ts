@@ -1,12 +1,19 @@
 import {matchingAddress} from '@/lib/address-folders';
-import {listFolders,findFolder} from '@/lib/folders';
+import {findFolder} from '@/lib/folders';
+import {libraryCatalog,libraryNavigation,librarySelection} from '@/lib/library-catalog';
 import {ApiError,failure,identity,json,storage,limitedBody,imageType} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
 import {budgetUsage} from '@/lib/r2-budget';
 import {claimUpload} from '@/lib/upload-receipt';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){try{
-  const owner=await identity();const {db}=storage(),params=new URL(request.url).searchParams,folder=params.get('folder');
+  const owner=await identity(request);const {db}=storage(),params=new URL(request.url).searchParams,folder=params.get('folder');
+  const scope=librarySelection(params);
+  if(params.get('navigation')==='1')return json(await libraryNavigation(db,owner,scope.region));
+  if(params.get('usageOnly')==='1'){
+    const [usage,recent]=await Promise.all([budgetUsage(db),db.prepare('SELECT COALESCE(SUM(size),0) AS bytes FROM photos WHERE owner=? AND created_at>=? AND deleted=0').bind(owner,new Date(Date.now()-7*86400000).toISOString()).first<{bytes:number}>()]);
+    return json({usage,forecast:{dailyBytes:(recent?.bytes||0)/7,daysRemaining:recent?.bytes?Math.max(0,(usage.storageLimit-usage.storageBytes)/(recent.bytes/7)):null}});
+  }
   const photosOnly=params.get('photosOnly')==='1',kind=params.get('kind');
   if(kind&&kind!=='photo'&&kind!=='drawing')throw new ApiError('사진 종류를 확인해 주세요.');
   const size=params.get('limit')||'60';if(!/^\d+$/.test(size)||Number(size)<1||Number(size)>100)throw new ApiError('사진 요청 범위를 확인해 주세요.');
@@ -24,8 +31,8 @@ export async function GET(request:Request){try{
   let photos:Record<string,unknown>[]=[],nextCursor:string|null=null;
   if(ids.length){const values:unknown[]=[owner,JSON.stringify(ids)];let where='owner=? AND folder IN (SELECT value FROM json_each(?)) AND deleted=0';if(kind){where+=' AND kind=?';values.push(kind);}if(cursor){where+=' AND (created_at<? OR (created_at=? AND id<?))';values.push(cursor.created,cursor.created,cursor.id);}const rows=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail FROM photos WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`).bind(...values,limit+1).all();photos=rows.results.slice(0,limit);if(rows.results.length>limit){const last=photos[photos.length-1];nextCursor=JSON.stringify({created:last.created_at,id:last.id});}}
   if(photosOnly)return json({photos,nextCursor});
-  const [folders,usage,recent]=await Promise.all([listFolders(db,owner),budgetUsage(db),db.prepare('SELECT COALESCE(SUM(size),0) AS bytes FROM photos WHERE owner=? AND created_at>=? AND deleted=0').bind(owner,new Date(Date.now()-7*86400000).toISOString()).first<{bytes:number}>()]);
-  return json({folders,photos,nextCursor,usage,forecast:{dailyBytes:(recent?.bytes||0)/7,daysRemaining:recent?.bytes?Math.max(0,(usage.storageLimit-usage.storageBytes)/(recent.bytes/7)):null}});
+  const catalog=await libraryCatalog(db,owner,params);
+  return json({...catalog,photos,nextCursor});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
   const started=performance.now(),timings:string[]=[];let checkpoint=started;

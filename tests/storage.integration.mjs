@@ -1,4 +1,5 @@
 import {addressParts} from '../lib/address-folders.ts';
+import {librarySnapshot} from './library-test-utils.mjs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
@@ -15,7 +16,7 @@ const adminKey='integration-test-only-admin-key-0123456789';
 const mf=new Miniflare({modules:[{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'test-fieldnote-db'},r2Buckets:['BUCKET'],bindings:{ADMIN_SETUP_KEY:adminKey,SITE_DATA_OWNER:'test-owner'},cf:false});
 const headers={'oai-authenticated-user-id':'test-owner','oai-authenticated-user-email':'test@example.test'};
 const other={cookie:'','oai-authenticated-user-id':'other-user','oai-authenticated-user-email':'other@example.test'};
-const request=async(path,options={})=>{if(/^\/api\/export(?:\?|$)/.test(path))options={...options,method:'POST',headers:{origin:'https://fieldnote.test',...options.headers}};if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
+const request=async(path,options={})=>{if(path==='/api/library'&&(!options.method||options.method==='GET'))return librarySnapshot(request,options);if(/^\/api\/export(?:\?|$)/.test(path))options={...options,method:'POST',headers:{origin:'https://fieldnote.test',...options.headers}};if(options.body instanceof FormData){const encoded=new Response(options.body);options={...options,body:await encoded.arrayBuffer(),headers:{...options.headers,'content-type':encoded.headers.get('content-type')}};}return mf.dispatchFetch('https://fieldnote.test'+path,{...options,headers:{...headers,...options.headers}});};
 const archiveRequest=async(path,options={})=>{
   const response=await request(path,options);if(!response.ok)return response;
   assert.match(response.headers.get('content-type'),/application\/json/,'ZIP CPU work runs on the client');
@@ -102,7 +103,7 @@ try{
   const reservations=await Promise.all(Array.from({length:25},()=>db.prepare('INSERT INTO drawing_ai_usage (day,requests) VALUES (?,1) ON CONFLICT(day) DO UPDATE SET requests=requests+1 WHERE requests<20 RETURNING requests').bind('2000-01-01').first()));assert.equal(reservations.filter(Boolean).length,20);
   const thumbnailKey=(await db.prepare('SELECT thumbnail_key FROM photos WHERE id=?').bind(drawing.id).first()).thumbnail_key;
   const drawings=await(await request('/api/library?folder=158-22')).json();assert.equal(drawings.photos.find(p=>p.id===drawing.id).kind,'drawing');
-  assert.equal(drawings.usage.storageBytes,drawingBaseline+png.length+thumb.length);
+  assert.equal((await(await request('/api/library?usageOnly=1')).json()).usage.storageBytes,drawingBaseline+png.length+thumb.length);
   assert.deepEqual(Buffer.from(await(await request('/api/photos/'+drawing.id)).arrayBuffer()),png);
   for(const scope of ['?folder=158-22','?date=2026-09-17','?region='+encodeURIComponent('사직4구역'),'']){
     const manifest=await(await request('/api/export'+scope)).json();
@@ -129,7 +130,7 @@ try{
     const response=await request('/api/library?folder='+folder+'&filename='+encodeURIComponent('현장사진.png'),{method:'POST',headers:{origin:'https://fieldnote.test'},body:png});
     assert.equal(response.status,201,await response.clone().text());created.push((await response.json()).photo);assert.equal(created.at(-1).kind,'photo');
   }
-  const listing=await (await request('/api/library?folder=158-22')).json();assert.equal(listing.photos.length,2);assert.equal(listing.folders.find(f=>f.id==='159-4').count,1);
+  const listing=await (await request('/api/library?folder=158-22')).json();assert.equal(listing.photos.length,2);assert.equal((await(await request('/api/library?folder=159-4')).json()).folders[0].count,1);
   const download=await request('/api/photos/'+created[0].id);assert.deepEqual(Buffer.from(await download.arrayBuffer()),png);
   assert.equal((await request('/api/photos/'+created[0].id,{headers:other})).status,401);
   assert.equal((await request('/api/library?id='+created[0].id,{method:'DELETE',headers:other})).status,401);

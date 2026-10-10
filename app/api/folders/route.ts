@@ -2,6 +2,7 @@ import {z} from 'zod';
 import {identity,storage,json,failure,limitedBody,ApiError} from '@/lib/storage';
 import {findFolder} from '@/lib/folders';
 import {SURVEY_STATUSES} from '@/lib/daily-report';
+import {librarySelection,selectedFolderIds} from '@/lib/library-catalog';
 const update=z.object({id:z.string().min(1).max(150),revision:z.number().int().positive(),remarks:z.string().max(10000),buildingDetails:z.string().max(100),surveyStatus:z.enum(SURVEY_STATUSES)}).strict();
 export async function PATCH(request:Request){try{
   const owner=await identity(request);const {db}=storage();
@@ -13,14 +14,18 @@ export async function PATCH(request:Request){try{
 }catch(e){return failure(e);}}
 
 const selectionSchema=z.object({ids:z.array(z.string().min(1).max(150)).min(1).max(10000)}).strict();
-async function readSelection(request:Request){try{return [...new Set(selectionSchema.parse(JSON.parse(new TextDecoder().decode(await limitedBody(request,2*1024*1024)))).ids)];}catch{throw new ApiError('삭제할 일정 폴더를 선택해 주세요.');}}
 export async function POST(request:Request){try{
-  const owner=await identity(request),{db}=storage(),ids=JSON.stringify(await readSelection(request));
+  const owner=await identity(request),{db}=storage();
+  const input=await limitedBody(request,2*1024*1024);let payload:unknown;try{payload=JSON.parse(new TextDecoder().decode(input));}catch{throw new ApiError('삭제할 일정 폴더를 선택해 주세요.');}
+  const scopes=z.object({ids:z.array(z.string().min(1).max(150)).max(10000).optional(),selections:z.array(z.object({region:z.string().max(300).optional(),date:z.string().optional(),folder:z.string().max(150).optional(),view:z.enum(['date','address']),path:z.array(z.string().max(600)).max(4).optional()}).strict()).max(100).optional()}).strict().safeParse(payload);
+  if(!scopes.success||!((scopes.data.ids?.length||0)+(scopes.data.selections?.length||0)))throw new ApiError('삭제할 일정 폴더를 선택해 주세요. 한 번에 최대 100개 묶음 또는 10,000개 일정을 선택할 수 있습니다.');
+  const resolved=new Set(scopes.data.ids||[]);for(const selection of scopes.data.selections||[]){const query=new URLSearchParams();for(const [key,value]of Object.entries(selection)){if(value!==undefined)query.set(key,key==='path'?JSON.stringify(value):String(value));}for(const id of await selectedFolderIds(db,owner,librarySelection(query)))resolved.add(id);if(resolved.size>10000)throw new ApiError('한 번에 최대 10,000개 일정을 선택해 주세요.');}const selected=[...resolved];
+  const ids=JSON.stringify(selected);
   const folders=await db.prepare('SELECT COUNT(*) AS count FROM survey_folders WHERE owner=? AND id IN (SELECT value FROM json_each(?))').bind(owner,ids).first<{count:number}>();
   if(!folders?.count)throw new ApiError('삭제할 폴더가 없습니다.',404);
   const photos=await db.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes,COALESCE(SUM(CASE WHEN kind='drawing' THEN 1 ELSE 0 END),0) AS drawings FROM photos WHERE owner=? AND folder IN (SELECT value FROM json_each(?))").bind(owner,ids).first<{count:number;bytes:number;drawings:number}>();
   const sources=await db.prepare('SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes FROM schedule_imports s WHERE owner=? AND EXISTS (SELECT 1 FROM survey_folders f WHERE f.owner=s.owner AND f.region=s.region AND f.survey_date=s.survey_date AND f.id IN (SELECT value FROM json_each(?))) AND NOT EXISTS (SELECT 1 FROM survey_folders f WHERE f.owner=s.owner AND f.region=s.region AND f.survey_date=s.survey_date AND f.id NOT IN (SELECT value FROM json_each(?)))').bind(owner,ids,ids).first<{count:number;bytes:number}>();
-  return json({folders:folders.count,photos:photos?.count||0,drawings:photos?.drawings||0,sources:sources?.count||0,bytes:(photos?.bytes||0)+(sources?.bytes||0)});
+  return json({ids:selected,folders:folders.count,photos:photos?.count||0,drawings:photos?.drawings||0,sources:sources?.count||0,bytes:(photos?.bytes||0)+(sources?.bytes||0)});
 }catch(e){return failure(e);}}
 
 export async function DELETE(request:Request){try{

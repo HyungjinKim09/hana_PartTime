@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {librarySnapshot} from './library-test-utils.mjs';
 import {testRuntime,png} from './test-runtime.mjs';
 import {validateBackup,backupPath,sha256} from '../lib/backup-format.ts';
 const t=await testRuntime(),post=async data=>t.request('/api/restore',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});
@@ -26,7 +27,7 @@ try{
  for(const f of files){const url='/api/restore?'+new URLSearchParams({job,kind:f.kind,id:f.id});assert.equal((await t.request(url,{method:'PUT',body:Buffer.concat([png,Buffer.from('corrupt')])})).status,422);assert.equal((await t.request(url,{method:'PUT',body:png})).status,201);assert.equal((await t.request(url,{method:'PUT',body:png})).status,200);}
  const finish=await post({action:'finish',job});assert.equal(finish.status,200,await finish.text());
  assert.equal((await post({action:'finish',job})).status,200);
- const folders=(await t.request('/api/library').then(r=>r.json())).folders;assert.equal(folders.length,2);
+ const folders=(await librarySnapshot(t.request).then(r=>r.json())).folders;assert.equal(folders.length,2);
  const restored=folders.find(f=>f.id!=='fixture');assert.equal(restored.remarks,'보존할 비고');assert.equal(restored.surveyStatus,'완료');assert.equal(restored.drawingCount,1);assert.ok(restored.region.startsWith('복원 '));
  const restoredPhoto=await t.db.prepare('SELECT * FROM photos WHERE folder=?').bind(restored.id).first();assert.deepEqual(Buffer.from(await (await (await t.mf.getR2Bucket('BUCKET')).get(restoredPhoto.object_key)).arrayBuffer()),png);
  const restoredDraft=await t.db.prepare('SELECT * FROM drawing_drafts WHERE photo_id=?').bind(restoredPhoto.id).first();assert.deepEqual(JSON.parse(restoredDraft.draft),draft);assert.equal(restoredDraft.revision,3);
