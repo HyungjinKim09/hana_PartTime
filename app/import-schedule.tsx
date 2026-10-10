@@ -20,8 +20,8 @@ export function ImportSchedule({open,manual=false,initialRegion='',initialDate='
     try{checked=await rasterFile(f);if(typeof createImageBitmap==='function'){const bitmap=await createImageBitmap(checked);bitmap.close();}}
     catch(e){setError(e instanceof Error?e.message:'사진을 읽지 못했습니다.');setBusy(false);return;}
     setFile(checked);const preview=URL.createObjectURL(checked);objectUrl.current=preview;setUrl(preview);
-    try{const {recognizeSchedule}=await import('@/lib/schedule-ocr');const result=await recognizeSchedule(checked,setProgress);if(!result.folders.length)result.folders=[emptyRow()];setDraft(result);}
-    catch{setError('글자를 읽지 못했어요. 원본을 보며 지역·날짜·번지를 입력하면 등록할 수 있어요.');setDraft({region:'',date:'',folders:[emptyRow()],warnings:[]});}
+    try{const {recognizeSchedulePhoto}=await import('@/lib/schedule-recognition');const result=await recognizeSchedulePhoto(checked,setProgress);if(!result.folders.length)result.folders=[emptyRow()];setDraft(result);}
+    catch(e){setError(e instanceof Error?e.message:'글자를 읽지 못했어요. 원본을 보며 직접 입력할 수 있어요.');setDraft({region:initialRegion,date:initialDate,folders:[emptyRow()],warnings:[]});}
     finally{setBusy(false);}
   }
   function row(index:number,key:string,value:unknown){setDraft(d=>d?{...d,folders:d.folders.map((f,i)=>i===index?{...f,[key]:value}:f)}:d);}
@@ -33,9 +33,9 @@ export function ImportSchedule({open,manual=false,initialRegion='',initialDate='
     catch(e){setError(e instanceof Error?e.message:'연결을 확인하고 다시 시도해 주세요.');}finally{setSaving(false);}
   }
   return <Dialog open={open} onOpenChange={v=>{if(!v&&!busy&&!saving)onClose();}}><DialogContent className="schedule-dialog" onInteractOutside={e=>{if(busy||saving)e.preventDefault();}}><DialogHeader><DialogTitle>{manual?'일정 직접 추가':'일정표 사진으로 폴더 만들기'}</DialogTitle><DialogDescription>{manual?'사진 없이 일정을 입력합니다. 기존 날짜에 일정을 추가하거나 새 지역·날짜로 등록할 수 있습니다.':'지역 → 조사 날짜 → 번지별 일정 순서로 저장합니다. 일정표 원본도 함께 보관됩니다.'}</DialogDescription></DialogHeader>
-    {!manual&&!file&&<button className="schedule-pick" onClick={()=>input.current?.click()}><CloudUpload size={32}/><strong>일정표 사진 선택</strong><span>JPG · PNG · WEBP · 한 장당 20MB</span></button>}
+    {!manual&&!file&&<button className="schedule-pick" onClick={()=>input.current?.click()}><CloudUpload size={32}/><strong>일정표 사진 선택</strong><span>JPG · PNG · WEBP · 한 장당 20MB</span><small>CLOVA 연결 시 일정표를 네이버 클라우드로 전송해 읽습니다.</small></button>}
     <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{if(e.target.files?.[0])void choose(e.target.files[0]);e.target.value='';}}/>
-    {busy&&<div role="status" className="ocr-status"><strong>지역·날짜·호수별 일정을 읽고 있어요</strong><p>칸별로 확인하므로 일정 수에 따라 시간이 걸릴 수 있어요.</p><Progress value={progress}/><span>{Math.round(progress)}% · 이 창을 열어두세요.</span></div>}
+    {busy&&<div role="status" className="ocr-status"><strong>지역·날짜·호수별 일정을 읽고 있어요</strong><p>인식이 끝나면 원본과 비교하고 수정할 수 있어요.</p><Progress value={progress}/><span>{Math.round(progress)}% · 이 창을 열어두세요.</span></div>}
     {error&&<p role="alert" className="error-banner">{error}</p>}
     {!busy&&draft&&draft.warnings.length>0&&<div role="status" className="review-hint">{draft.warnings.map((warning,i)=><p key={i}>{warning}</p>)}</div>}
     {(manual||file)&&!busy&&draft&&<><div className={manual?'manual-layout':'import-layout'}>{!manual&&<div className="schedule-original"><button type="button" className="subtle-button" onClick={()=>setEnlarged(true)}><img src={url} alt="등록할 일정표 원본"/></button><button className="subtle-button" disabled={saving} onClick={()=>input.current?.click()}>다른 사진 선택</button><small>원본을 누르면 크게 볼 수 있어요.</small></div>}<div className="schedule-review"><div className="review-top"><label>지역 폴더<input value={draft.region} placeholder="예: 사직4구역" disabled={saving} onChange={e=>setDraft({...draft,region:e.target.value})}/></label><label>조사 날짜<input type="date" value={draft.date} disabled={saving} onChange={e=>setDraft({...draft,date:e.target.value})}/></label></div><p className="review-hint">{manual?'지역·조사 날짜·번지는 필수입니다. 같은 번지라도 건물·호수가 다르면 별도 일정으로 저장합니다.':'사진을 올린 날짜가 아닌, 일정표에 적힌 날짜를 확인해 주세요. 같은 번지라도 건물·호수가 다르면 별도 일정으로 저장합니다. 이름·연락처 등 인식 내용을 원본과 확인해 주세요.'}</p><h3>번지별 일정 <span>{draft.folders.length}개</span></h3>

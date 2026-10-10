@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {ApiError,failure,limitedBody} from '@/lib/storage';
-import {allowLogin,equalHash,getAccount,issueSession,passwordHash,revokeSession,sessionCookie} from '@/lib/site-auth';
+import {allowLogin,equalHash,getAccount,issueSession,passwordHash,revokeSession,sessionHeaders} from '@/lib/site-auth';
 export const dynamic='force-dynamic';
 export function checkOrigin(request:Request){
   if(request.headers.get('sec-fetch-site')==='cross-site'||request.headers.get('origin')!==new URL(request.url).origin)throw new ApiError('이 사이트의 로그인 화면에서 다시 시도해 주세요.',403);
@@ -15,9 +15,9 @@ export async function POST(request:Request){try{
   const hash=await passwordHash(input.password,account?.salt||'unconfigured-account');
   if(!account||!equalHash(hash,account.password_hash)||input.username!==account.username)throw new ApiError('아이디 또는 비밀번호를 확인해 주세요.',401);
   const token=await issueSession(account.version);
-  return Response.json({ok:true},{headers:{'Set-Cookie':sessionCookie(token),'Cache-Control':'no-store'}});
+  return Response.json({ok:true},{headers:sessionHeaders(token)});
 }catch(e){return failure(e);}}
 export async function DELETE(request:Request){try{
   checkOrigin(request);await revokeSession(request);
-  return Response.json({ok:true},{headers:{'Set-Cookie':sessionCookie('',0),'Cache-Control':'no-store'}});
+  return Response.json({ok:true},{headers:sessionHeaders(null)});
 }catch(e){return failure(e);}}

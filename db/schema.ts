@@ -8,8 +8,11 @@ export const siteAccount=sqliteTable('site_account',{
   id:integer('id').primaryKey(),owner:text('owner').notNull(),username:text('username').notNull(),salt:text('salt').notNull(),passwordHash:text('password_hash').notNull(),version:integer('version').notNull(),
 });
 export const siteSessions=sqliteTable('site_sessions',{
-  tokenHash:text('token_hash').primaryKey(),version:integer('version').notNull(),expiresAt:integer('expires_at').notNull(),
-});
+  tokenHash:text('token_hash').primaryKey(),version:integer('version').notNull(),expiresAt:integer('expires_at').notNull(),familyId:text('family_id'),
+},t=>[index('site_sessions_family').on(t.familyId),index('site_sessions_expiry').on(t.expiresAt)]);
+export const siteRefreshSessions=sqliteTable('site_refresh_sessions',{
+  id:text('id').primaryKey(),tokenHash:text('token_hash').notNull(),previousHash:text('previous_hash'),previousUntil:integer('previous_until').notNull().default(0),version:integer('version').notNull(),expiresAt:integer('expires_at').notNull(),
+},t=>[index('site_refresh_sessions_expiry').on(t.expiresAt)]);
 export const siteLoginLimits=sqliteTable('site_login_limits',{
   key:text('key').primaryKey(),attempts:integer('attempts').notNull(),expiresAt:integer('expires_at').notNull(),
 });
@@ -20,6 +23,7 @@ export const photos=sqliteTable('photos',{
   contentType:text('content_type').notNull(), size:integer('size').notNull(), createdAt:text('created_at').notNull(), deleted:integer('deleted').notNull().default(0),
 }, table=>[index('photos_owner_folder_created').on(table.owner,table.folder,table.createdAt)]);
 export const folderSeedState=sqliteTable('folder_seed_state',{owner:text('owner').primaryKey()});
+export const scheduleOcrUsage=sqliteTable('schedule_ocr_usage',{month:text('month').primaryKey(),requests:integer('requests').notNull().default(0)});
 export const surveyFolders=sqliteTable('survey_folders',{
   revision:integer('revision').notNull().default(1),
   manualAdded:integer('manual_added').notNull().default(0),unitDisplay:text('unit_display').notNull().default(''),deleting:integer('deleting').notNull().default(0),owner:text('owner').notNull(),id:text('id').notNull(),region:text('region').notNull(),date:text('survey_date').notNull(),lot:text('lot').notNull(),unit:text('unit').notNull().default(''),

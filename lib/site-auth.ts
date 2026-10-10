@@ -1,9 +1,10 @@
 import {env} from 'cloudflare:workers';
 import {headers} from 'next/headers';
-import {COOKIE,digest,lookupSession} from './session-lookup';
+import {digest,lookupSession} from './session-lookup';
+import {createSession,revokeTokens} from './refresh-sessions';
+export {sessionHeaders} from './refresh-sessions';
 export {COOKIE,digest} from './session-lookup';
 
-export const SESSION_SECONDS=7*24*60*60;
 type Account={owner:string;username:string;salt:string;password_hash:string;version:number};
 const db=()=>env.DB as D1Database;
 const hex=(bytes:ArrayBuffer)=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
@@ -22,14 +23,11 @@ export async function validAdminKey(key:string){
 export async function sessionUser(){
   return lookupSession(db(),(await headers()).get('cookie')||'');
 }
-export function sessionCookie(token:string,maxAge=SESSION_SECONDS){return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;}
 export async function issueSession(version:number){
-  const token=randomToken();await db().prepare('INSERT INTO site_sessions (token_hash,version,expires_at) VALUES (?,?,?)').bind(await digest(token),version,Date.now()+SESSION_SECONDS*1000).run();
-  await db().prepare('DELETE FROM site_sessions WHERE expires_at<=?').bind(Date.now()).run();return token;
+  return createSession(db(),version,env.ADMIN_SETUP_KEY);
 }
 export async function revokeSession(request:Request){
-  const token=(request.headers.get('cookie')||'').split(';').map(s=>s.trim()).find(s=>s.startsWith(COOKIE+'='))?.slice(COOKIE.length+1);
-  if(token)await db().prepare('DELETE FROM site_sessions WHERE token_hash=?').bind(await digest(token)).run();
+  return revokeTokens(db(),request.headers.get('cookie')||'');
 }
 export async function allowLogin(request:Request,scope='login'){
   const now=Date.now(),window=Math.floor(now/900000);

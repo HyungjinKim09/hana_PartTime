@@ -1,5 +1,5 @@
 import {ApiError,failure,storage} from '@/lib/storage';
-import {getAccount,issueSession,passwordHash,randomToken,sessionCookie,validAdminKey,allowLogin} from '@/lib/site-auth';
+import {getAccount,issueSession,passwordHash,randomToken,sessionHeaders,validAdminKey,allowLogin} from '@/lib/site-auth';
 import {env} from 'cloudflare:workers';
 import {checkOrigin,readCredentials} from '../session/route';
 export const dynamic='force-dynamic';
@@ -13,6 +13,7 @@ export async function POST(request:Request){try{
   const updated=await db.prepare('INSERT INTO site_account (id,owner,username,salt,password_hash,version) VALUES (1,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET username=excluded.username,salt=excluded.salt,password_hash=excluded.password_hash,version=site_account.version+1 RETURNING version').bind(owner,input.username,salt,hash).first<{version:number}>();
   if(!updated)throw new ApiError('계정을 저장하지 못했습니다.',503);
   await db.prepare('DELETE FROM site_sessions WHERE version<>?').bind(updated.version).run();
+  await db.prepare('DELETE FROM site_refresh_sessions WHERE version<>?').bind(updated.version).run();
   const token=await issueSession(updated.version);
-  return Response.json({ok:true},{headers:{'Set-Cookie':sessionCookie(token),'Cache-Control':'no-store'}});
+  return Response.json({ok:true},{headers:sessionHeaders(token)});
 }catch(e){return failure(e);}}

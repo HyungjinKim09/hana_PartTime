@@ -44,6 +44,24 @@ export function traceDrawing(rgba:ArrayLike<number>,width:number,height:number,b
     if(a.axis===b.axis)return null;const h=a.axis===0?a:b,v=a.axis===1?a:b;
     const x=(v.slope*h.intercept+v.intercept)/(1-v.slope*h.slope);return {x,y:h.slope*x+h.intercept};
   }
+  function mergeObserved(overlapOnly=false){
+    for(let i=0;i<candidates.length;i++)for(let j=candidates.length-1;j>i;j--){const a=candidates[i],b=candidates[j];
+      if(a.axis!==b.axis)continue;
+      const from=Math.max(a.start,b.start),to=Math.min(a.end,b.end),separated=to<from;
+      if(separated&&(overlapOnly||from-to>Math.max(10,Math.max(width,height)*.05)))continue;
+      // Pencil wobble can split one side into overlapping slope estimates.
+      // Consolidate those before text filtering examines their junctions.
+      const partial=separated||(to-from)/Math.min(a.end-a.start,b.end-b.start)<.7;
+      // Matching complete spans can be two separate narrow walls. Use the
+      // larger wobble tolerance only for complementary partial fragments.
+      if(![from,to].every(u=>Math.abs((a.slope-b.slope)*u+a.intercept-b.intercept)<(partial?6:3)))continue;
+      if(separated&&!supported(a,to,from))continue;
+      const start=Math.min(a.start,b.start),end=Math.max(a.end,b.end),left=a.start<=b.start?a:b,right=a.end>=b.end?a:b;
+      const v0=left.slope*start+left.intercept,v1=right.slope*end+right.intercept,slope=(v1-v0)/(end-start);
+      Object.assign(a,{start,end,slope,intercept:v0-slope*start});candidates.splice(j,1);
+    }
+  }
+  mergeObserved(true);
   // Evaluate short connected sides together; a small enclosure may have two
   // short sides, neither of which should be deleted before checking the other.
   for(let i=candidates.length-1;i>=0;i--){const c=candidates[i];if(c.end-c.start>=minLength)continue;
@@ -72,15 +90,7 @@ export function traceDrawing(rgba:ArrayLike<number>,width:number,height:number,b
       if(supported(c,end,u)){c.start=Math.min(c.start,u);c.end=Math.max(c.end,u);}
     }
   }
-  for(let i=0;i<candidates.length;i++)for(let j=candidates.length-1;j>i;j--){const a=candidates[i],b=candidates[j];
-    if(a.axis!==b.axis||Math.min(a.end,b.end)<Math.max(a.start,b.start)-Math.max(10,Math.max(width,height)*.05))continue;
-    const separated=Math.min(a.end,b.end)<Math.max(a.start,b.start);
-    if([Math.max(a.start,b.start),Math.min(a.end,b.end)].every(u=>Math.abs((a.slope-b.slope)*u+a.intercept-b.intercept)<(separated?6:3))){
-      const start=Math.min(a.start,b.start),end=Math.max(a.end,b.end),left=a.start<=b.start?a:b,right=a.end>=b.end?a:b;
-      const v0=left.slope*start+left.intercept,v1=right.slope*end+right.intercept,slope=(v1-v0)/(end-start);
-      Object.assign(a,{start,end,slope,intercept:v0-slope*start});candidates.splice(j,1);
-    }
-  }
+  mergeObserved();
   const cornerTolerance=Math.min(30,Math.max(8,Math.max(width,height)*.03));
   function crossing(a:Candidate,b:Candidate){
     const h=a.axis===0?a:b,v=a.axis===1?a:b;if(a.axis===b.axis)return null;
@@ -121,6 +131,31 @@ export function traceDrawing(rgba:ArrayLike<number>,width:number,height:number,b
     const joined=(end:number)=>plan.some(other=>{const p=crossing(c,other);return p&&Math.abs((c.axis?p.y:p.x)-end)<8;});
     if(!joined(c.start)||!joined(c.end)){plan.splice(i,1);pruned=true;}
   }}
+  // A nearby digit can align with a real divider and be collected in the same
+  // Hough run. Its centre is then outside the text box, so centre-only filtering
+  // cannot catch it. Cut only the short text tail after a real wall junction.
+  const nearText=(c:Candidate)=>c.end-c.start<Math.min(width,height)*.22&&boxes.some(b=>[c.start,(c.start+c.end)/2,c.end].some(u=>{
+    const v=c.slope*u+c.intercept,x=(c.axis?v:u)/width*1000,y=(c.axis?u:v)/height*1000;return x>b[0]-12&&x<b[2]+12&&y>b[1]-12&&y<b[3]+12;
+  }));
+  let trimmedText=false;
+  for(const c of plan)for(const side of ['start','end'] as const){
+    const end=c[side],v=c.slope*end+c.intercept,x=(c.axis?v:end)/width*1000,y=(c.axis?end:v)/height*1000;
+    const text=boxes.find(b=>b.length===4&&b[2]-b[0]<120&&b[3]-b[1]<100&&x>b[0]-6&&x<b[2]+6&&y>b[1]-6&&y<b[3]+6);
+    if(!text)continue;
+    if(plan.some(other=>{if(other===c||nearText(other))return false;const p=crossing(c,other);return p&&Math.abs((c.axis?p.y:p.x)-end)<=cornerTolerance;}))continue;
+    const junctions=plan.flatMap(other=>{if(other===c||nearText(other))return [];const p=crossing(c,other);if(!p)return [];const u=c.axis?p.y:p.x;return u>c.start+8&&u<c.end-8?[u]:[];});
+    junctions.sort((a,b)=>Math.abs(a-end)-Math.abs(b-end));const junction=junctions[0];
+    if(junction===undefined||Math.abs(junction-end)>minLength*2||Math.abs(junction-(side==='start'?c.end:c.start))<minLength)continue;
+    const jv=c.slope*junction+c.intercept,jx=(c.axis?jv:junction)/width*1000,jy=(c.axis?junction:jv)/height*1000;
+    if(jx>text[0]-6&&jx<text[2]+6&&jy>text[1]-6&&jy<text[3]+6)continue;
+    c[side]=junction;trimmedText=true;
+  }
+  // Recheck the short text crossbars after their digit attachment is removed.
+  // Both observed end junctions protect genuine small enclosure sides.
+  if(trimmedText)for(let i=plan.length-1;i>=0;i--){const c=plan[i];if(!nearText(c))continue;
+    const joined=(end:number)=>plan.some(other=>{const p=crossing(c,other);return p&&Math.abs((c.axis?p.y:p.x)-end)<8;});
+    if(!joined(c.start)||!joined(c.end))plan.splice(i,1);
+  }
   const result:TraceLine[]=[];
   for(const c of plan){
     let start=c.start,end=c.end,startDistance=cornerTolerance,endDistance=cornerTolerance;

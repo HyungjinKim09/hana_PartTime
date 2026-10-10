@@ -1,7 +1,7 @@
 import {traceDrawing} from '../lib/drawing-trace.ts';
 import {drawingSchema,drawingMetadataSchema,parseDrawingMetadata} from '../lib/drawing.ts';
 import {test} from 'node:test';import assert from 'node:assert/strict';
-function raster(){const w=400,h=300,data=new Uint8Array(w*h*4).fill(255);function line(x0,y0,x1,y1,dashed=false){const length=Math.max(Math.abs(x1-x0),Math.abs(y1-y0));for(let n=0;n<=length;n++){if(dashed&&n%14>6)continue;const x=Math.round(x0+(x1-x0)*n/length),y=Math.round(y0+(y1-y0)*n/length);for(let d=-1;d<=1;d++){const i=((y+d)*w+x)*4;data[i]=data[i+1]=data[i+2]=35;}}}return {w,h,data,line};}
+function raster(w=400,h=300){const data=new Uint8Array(w*h*4).fill(255);function line(x0,y0,x1,y1,dashed=false){const length=Math.max(Math.abs(x1-x0),Math.abs(y1-y0));for(let n=0;n<=length;n++){if(dashed&&n%14>6)continue;const x=Math.round(x0+(x1-x0)*n/length),y=Math.round(y0+(y1-y0)*n/length);for(let d=-1;d<=1;d++){const i=((y+d)*w+x)*4;data[i]=data[i+1]=data[i+2]=35;}}}return {w,h,data,line};}
 test('pixel tracing preserves an L-shaped notch and an observed internal division',()=>{const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,200,250],[200,250,200,200],[200,200,50,200],[50,200,50,50],[200,50,200,200]])r.line(...p);const lines=traceDrawing(r.data,r.w,r.h);assert.ok(lines.length>=6);const close=(p,x,y)=>Math.hypot(p.x-x/400*1000,p.y-y/300*1000)<15;assert.ok(lines.some(l=>Math.abs(l.a.x-500)<15&&Math.abs(l.b.x-500)<15&&Math.min(l.a.y,l.b.y)<675&&Math.max(l.a.y,l.b.y)>820));assert.ok(!lines.some(l=>l.a.x<140&&l.b.x<140&&Math.max(l.a.y,l.b.y)>700));});
 test('blank paper cannot produce invented rooms',()=>{const r=raster();assert.deepEqual(traceDrawing(r.data,r.w,r.h),[]);assert.throws(()=>traceDrawing(r.data,20,30));});
 test('metadata cannot supply wall geometry and source crop must be ordered',()=>{const m=parseDrawingMetadata({response:JSON.stringify({widthMeters:null,heightMeters:null,labels:[],warnings:[],lines:[{invented:true}]})});assert.equal('lines' in m,false);assert.equal(drawingMetadataSchema.safeParse({...m,labels:[{text:'방',x:1001,y:2,box:[1,2,3,4]}]}).success,false);assert.equal(drawingSchema.safeParse({version:1,widthMeters:1,heightMeters:1,lines:[{id:'a',a:{x:1,y:1},b:{x:5,y:1},dashed:false}],labels:[],warnings:[],source:{method:'pixel-trace',width:100,height:100,crop:{left:90,right:10,top:0,bottom:100}}}).success,false);});
@@ -31,4 +31,62 @@ test('a letter-shaped box and dimension tail do not become extra rooms',()=>{
  const lines=traceDrawing(r.data,r.w,r.h,[[430,835,465,925],[355,160,445,280]]);
  assert.ok(!lines.some(l=>Math.max(l.a.y,l.b.y)>860),'dimension strokes stay excluded');
  assert.ok(!lines.some(l=>l.a.x>350&&l.a.x<450&&l.b.x>350&&l.b.x<450&&Math.max(l.a.y,l.b.y)>210),'text-shaped enclosure stays excluded');
+});
+
+test('text hints beside a faint split enclosure do not remove its observed sides',()=>{
+ const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,50,250],[50,250,50,50]])r.line(...p);
+ r.line(160,50,160,115,true);r.line(200,50,202,92,true);r.line(202,85,200,140,true);
+ r.line(160,115,201,115,true);r.line(200,140,300,140,true);
+ const lines=traceDrawing(r.data,r.w,r.h,[[420,200,494,374]]);
+ assert.ok(lines.some(l=>Math.abs(l.a.x-501)<15&&Math.abs(l.b.x-501)<15&&Math.min(l.a.y,l.b.y)<185&&Math.max(l.a.y,l.b.y)>445),'split right side should be retained');
+ assert.ok(lines.some(l=>Math.abs(l.a.y-383)<12&&Math.abs(l.b.y-383)<12&&Math.min(l.a.x,l.b.x)<415&&Math.max(l.a.x,l.b.x)>490),'storage bottom should be retained');
+});
+
+test('overlapping sloped fragments beside text are joined before testing an enclosure',()=>{
+ const r=raster(960,720);for(const p of [[160,125,810,125],[810,125,810,560],[810,560,160,560],[160,560,160,125]])r.line(...p);
+ r.line(371,125,371,207,true);r.line(423,125,428,185,true);r.line(428,165,422,235,true);
+ r.line(371,207,424,208,true);r.line(422,235,602,235,true);r.line(602,125,602,322,true);
+ const lines=traceDrawing(r.data,r.w,r.h,[[395,172,435,278]]);
+ assert.ok(lines.some(l=>Math.abs(l.a.x-440)<15&&Math.abs(l.b.x-440)<15&&Math.min(l.a.y,l.b.y)<190&&Math.max(l.a.y,l.b.y)>315),'both sloped pieces should form the right enclosure side');
+ assert.ok(lines.some(l=>Math.abs(l.a.y-289)<15&&Math.abs(l.b.y-289)<15&&Math.min(l.a.x,l.b.x)<397&&Math.max(l.a.x,l.b.x)>428),'connected storage bottom should survive text padding');
+});
+
+test('a dimension stroke aligned with a divider is trimmed at the real wall junction',()=>{
+ const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,200,250],[200,250,200,200],[200,200,50,200],[50,200,50,50]])r.line(...p);
+ r.line(180,50,180,200,true);r.line(180,211,180,231);r.line(175,214,180,211);r.line(175,225,185,225);
+ const lines=traceDrawing(r.data,r.w,r.h,[[430,700,465,785]]);
+ assert.ok(lines.some(l=>Math.abs(l.a.x-450)<15&&Math.abs(l.b.x-450)<15&&Math.max(l.a.y,l.b.y)>645),'real divider should survive');
+ assert.ok(!lines.some(l=>Math.abs(l.a.x-450)<15&&Math.abs(l.b.x-450)<15&&Math.max(l.a.y,l.b.y)>700),'the adjoining dimension glyph must not extend the divider past its junction');
+});
+
+test('separate collinear strokes cannot bridge a blank gap without observed ink',()=>{
+ const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,50,250],[50,250,50,50]])r.line(...p);
+ r.line(200,50,200,115);r.line(200,135,200,250);
+ const lines=traceDrawing(r.data,r.w,r.h);
+ assert.ok(lines.some(l=>Math.abs(l.a.x-500)<12&&Math.abs(l.b.x-500)<12&&Math.min(l.a.y,l.b.y)<185));
+ assert.ok(lines.some(l=>Math.abs(l.a.x-500)<12&&Math.abs(l.b.x-500)<12&&Math.max(l.a.y,l.b.y)>810));
+ assert.ok(!lines.some(l=>Math.abs(l.a.x-500)<12&&Math.abs(l.b.x-500)<12&&Math.min(l.a.y,l.b.y)<400&&Math.max(l.a.y,l.b.y)>430),'blank separation must not become a new continuous divider');
+});
+
+test('an inaccurate word box at a real connected corner cannot trim the wall',()=>{
+ const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,50,250],[50,250,50,50]])r.line(...p);
+ const lines=traceDrawing(r.data,r.w,r.h,[[110,155,160,190]]);
+ assert.ok(lines.some(l=>Math.abs(l.a.y-167)<12&&Math.abs(l.b.y-167)<12&&Math.min(l.a.x,l.b.x)<140&&Math.max(l.a.x,l.b.x)>860));
+});
+
+test('closely spaced complete parallel dividers remain two distinct observed lines',()=>{
+ for(const spacing of [4,5]){
+  const r=raster();for(const p of [[50,50,350,50],[350,50,350,250],[350,250,50,250],[50,250,50,50],[180,50,180,250],[180+spacing,50,180+spacing,250]])r.line(...p);
+  const lines=traceDrawing(r.data,r.w,r.h).filter(l=>Math.abs(l.a.x-l.b.x)<12&&Math.min(l.a.x,l.b.x)>435&&Math.max(l.a.x,l.b.x)<480&&Math.abs(l.a.y-l.b.y)>600);
+  assert.equal(lines.length,2,`${spacing}px separated complete walls must not merge`);
+ }
+});
+
+test('a digit crossbar cannot make its adjoining text tail a real wall junction',()=>{
+ const r=raster(600,450);for(const p of [[50,50,550,50],[550,50,550,400],[550,400,300,400],[300,400,300,300],[300,300,50,300],[50,300,50,50]])r.line(...p);
+ r.line(250,50,250,300,true);r.line(250,311,250,347);r.line(250,338,338,338);
+ r.line(300,320,338,320);r.line(300,350,338,350);r.line(338,320,338,350);r.line(300,320,300,350);
+ const lines=traceDrawing(r.data,r.w,r.h,[[405,745,435,795],[520,700,554,795]]);
+ assert.ok(lines.some(l=>Math.abs(l.a.x-417)<12&&Math.abs(l.b.x-417)<12&&Math.max(l.a.y,l.b.y)>645),'the original divider should survive');
+ assert.ok(!lines.some(l=>Math.abs(l.a.x-417)<12&&Math.abs(l.b.x-417)<12&&Math.max(l.a.y,l.b.y)>705),'a letter crossbar must not protect the dimension tail');
 });
