@@ -1,31 +1,32 @@
+import {attribution,parseAttribution} from '@/lib/attribution';
 import {env} from 'cloudflare:workers';
 import {z} from 'zod';
-import {ApiError,failure,identity,json,limitedBody,storage} from '@/lib/storage';
+import {ApiError,failure,identityUser,json,limitedBody,storage} from '@/lib/storage';
 import {drawingSchema,drawingOrientationInput,parseDrawingOrientation,drawingMetadataInput,DRAWING_MODEL,DRAWING_DAILY_LIMIT,parseDrawingMetadata} from '@/lib/drawing';
 import {drawingLabelReviewInput,parseDrawingLabelReview} from '@/lib/drawing-label-review';
 
 async function context(request:Request){
-  const owner=await identity(request),{db}=storage(),id=new URL(request.url).searchParams.get('photo');
+  const user=await identityUser(request),owner=user.owner,{db}=storage(),id=new URL(request.url).searchParams.get('photo');
   if(!id||!await db.prepare("SELECT id FROM photos WHERE id=? AND owner=? AND kind='drawing' AND deleted=0").bind(id,owner).first())throw new ApiError('도면 사진을 찾을 수 없습니다.',404);
-  return {owner,db,id};
+  return {owner,db,id,user};
 }
 async function body(request:Request){try{return JSON.parse(new TextDecoder().decode(await limitedBody(request,900000)));}catch(e){if(e instanceof ApiError)throw e;throw new ApiError('도면 내용을 확인해 주세요.');}}
 export async function GET(request:Request){try{
   const {owner,db,id}=await context(request);
-  const row=await db.prepare('SELECT draft,revision FROM drawing_drafts WHERE photo_id=? AND owner=?').bind(id,owner).first<{draft:string;revision:number}>();
-  return json({draft:row?JSON.parse(row.draft):null,revision:row?.revision||0,aiAvailable:!!env.AI});
+  const row=await db.prepare('SELECT draft,revision,updated_by FROM drawing_drafts WHERE photo_id=? AND owner=?').bind(id,owner).first<{draft:string;revision:number;updated_by:string|null}>();
+  return json({draft:row?JSON.parse(row.draft):null,revision:row?.revision||0,updatedBy:parseAttribution(row?.updated_by),aiAvailable:!!env.AI});
 }catch(e){return failure(e);}}
 export async function PUT(request:Request){try{
-  const {owner,db,id}=await context(request),parsed=z.object({draft:drawingSchema,revision:z.number().int().min(0)}).safeParse(await body(request));
+  const {owner,db,id,user}=await context(request),parsed=z.object({draft:drawingSchema,revision:z.number().int().min(0)}).safeParse(await body(request));
   if(!parsed.success)throw new ApiError('도면의 선, 글자, 미터 치수를 확인해 주세요.');
-  const {draft,revision}=parsed.data;
+  const {draft,revision}=parsed.data,stamp=attribution(user);
   // A deleted photo cannot acquire an orphan draft; concurrent edits cannot overwrite each other.
-  const result=await db.prepare(`INSERT INTO drawing_drafts (photo_id,owner,draft,revision,updated_at)
-    SELECT id,owner,?,1,? FROM photos WHERE id=? AND owner=? AND deleted=0 AND kind='drawing' AND (?=0 OR EXISTS (SELECT 1 FROM drawing_drafts WHERE photo_id=?))
-    ON CONFLICT(photo_id) DO UPDATE SET draft=excluded.draft,revision=drawing_drafts.revision+1,updated_at=excluded.updated_at WHERE drawing_drafts.owner=? AND drawing_drafts.revision=? RETURNING revision`)
-    .bind(JSON.stringify(draft),new Date().toISOString(),id,owner,revision,id,owner,revision).first<{revision:number}>();
+  const result=await db.prepare(`INSERT INTO drawing_drafts (photo_id,owner,draft,revision,updated_at,updated_by)
+    SELECT id,owner,?,1,?,? FROM photos WHERE id=? AND owner=? AND deleted=0 AND kind='drawing' AND (?=0 OR EXISTS (SELECT 1 FROM drawing_drafts WHERE photo_id=?))
+    ON CONFLICT(photo_id) DO UPDATE SET draft=excluded.draft,revision=drawing_drafts.revision+1,updated_at=excluded.updated_at,updated_by=excluded.updated_by WHERE drawing_drafts.owner=? AND drawing_drafts.revision=? RETURNING revision`)
+    .bind(JSON.stringify(draft),new Date().toISOString(),stamp,id,owner,revision,id,owner,revision).first<{revision:number}>();
   if(!result)throw new ApiError('다른 화면에서 도면이 변경되었거나 사진이 삭제됐습니다. 현재 작업을 비지오로 내려받고 다시 열어 주세요.',409);
-  return json({saved:true,revision:result.revision});
+  return json({saved:true,revision:result.revision,updatedBy:parseAttribution(stamp)});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
   const {db}=await context(request);

@@ -5,7 +5,7 @@ export class ApiError extends Error { constructor(message:string,public status=4
 export function requireSameOrigin(request:Request){
   if(request.headers.get('origin')!==new URL(request.url).origin||request.headers.get('sec-fetch-site')==='cross-site')throw new ApiError('허용되지 않은 요청입니다.',403);
 }
-export async function identity(request?:Request) {
+export async function identityUser(request?:Request) {
   const user=await sessionUser();
   if(!user) throw new ApiError('로그인 후 다시 시도해 주세요.',401);
   if(request && request.method!=='GET') {
@@ -13,8 +13,9 @@ export async function identity(request?:Request) {
     const origin=request.headers.get('origin');
     if(origin && origin!==new URL(request.url).origin) throw new ApiError('허용되지 않은 요청입니다.',403);
   }
-  return user.owner;
+  return user;
 }
+export async function identity(request?:Request){return (await identityUser(request)).owner;}
 export function storage(){
   if(!env.DB || !env.BUCKET) throw new ApiError('사진 보관함에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',503);
   return {db:env.DB,bucket:guardedBucket(env.DB,env.BUCKET)};

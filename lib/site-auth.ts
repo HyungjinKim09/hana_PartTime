@@ -23,8 +23,8 @@ export async function validAdminKey(key:string){
 export async function sessionUser(){
   return lookupSession(db(),(await headers()).get('cookie')||'');
 }
-export async function issueSession(version:number){
-  return createSession(db(),version,env.ADMIN_SETUP_KEY);
+export async function issueSession(version:number,memberId:string|null=null,memberVersion=1){
+  return createSession(db(),version,env.ADMIN_SETUP_KEY,memberId,memberVersion);
 }
 export async function revokeSession(request:Request){
   return revokeTokens(db(),request.headers.get('cookie')||'');

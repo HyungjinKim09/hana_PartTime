@@ -8,18 +8,21 @@ try{
  await t.db.prepare("UPDATE survey_folders SET remarks='보존할 비고',survey_status='완료',building_details='일반건물' WHERE id='fixture'").run();
  const photo=await t.request('/api/library?folder=fixture&kind=drawing&filename=synthetic.png',{method:'POST',body:png});assert.equal(photo.status,201);const p=(await photo.json()).photo;
  const draft={version:1,widthMeters:10,heightMeters:6,lines:[{id:'wall',a:{x:0,y:0},b:{x:1000,y:0},dashed:false}],labels:[{id:'label',x:200,y:200,text:'창고'}],warnings:[]};
- await t.db.prepare('INSERT INTO drawing_drafts VALUES(?,?,?,?,?)').bind(p.id,t.owner,JSON.stringify(draft),3,new Date().toISOString()).run();
+ const writer={id:'historic-person',name:'백업 원 작업자',at:new Date().toISOString()};await t.db.prepare('INSERT INTO drawing_drafts(photo_id,owner,draft,revision,updated_at,updated_by) VALUES(?,?,?,?,?,?)').bind(p.id,t.owner,JSON.stringify(draft),3,new Date().toISOString(),JSON.stringify(writer)).run();
+ await t.db.prepare("UPDATE survey_folders SET schedule_updated_by=?,survey_updated_by=? WHERE id='fixture'").bind(JSON.stringify(writer),JSON.stringify(writer)).run();
+ await t.db.prepare("INSERT INTO personal_survey_records(owner,folder_id,actor_id,actor_name,remarks,building_details,survey_status,updated_at) VALUES(?,'fixture','earlier-author','이전 작성자 A','A의 별도 저장 내용','','완료',?)").bind(t.owner,writer.at).run();
  const source='synthetic-source';await (await t.mf.getR2Bucket('BUCKET')).put('fixture-source',png);
  await t.db.prepare('INSERT INTO schedule_imports(id,owner,filename,object_key,content_type,size,draft,region,survey_date,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(source,t.owner,'source.png','fixture-source','image/png',png.length,'{"folders":[]}','테스트','2026-09-23',new Date().toISOString()).run();
  const response=await t.request('/api/backup');assert.equal(response.status,200);const catalog=await response.json();
+ assert.equal(catalog.personalSurveys?.length,2,'personal report snapshots are part of whole backups');assert.ok(catalog.personalSurveys.some(r=>r.actor.id===writer.id));
  const files=[...catalog.photos.map(p=>({kind:'photo',...p})),...catalog.sources.map(s=>({...s,kind:'schedule'}))].map(p=>({kind:p.kind==='schedule'?'schedule':'photo',id:p.id,path:backupPath(p.kind==='schedule'?'schedule':'photo',p.id,p.content_type),size:p.size,sha256:''}));
  for(const f of files){const ticket=await t.request('/api/backup',{method:'POST',body:JSON.stringify({kind:f.kind,id:f.id})});assert.equal(ticket.status,200);const bytes=await (await t.request((await ticket.json()).url)).arrayBuffer();assert.deepEqual(Buffer.from(bytes),png);f.sha256=await sha256(bytes);}
  const manifest=validateBackup({...catalog,files}),hash=await sha256(new TextEncoder().encode(JSON.stringify(manifest)));
- const start={action:'start',header:{...catalog,folders:catalog.folders.length,photos:catalog.photos.length,sources:catalog.sources.length,drawings:catalog.drawings.length,manifestHash:hash}};
+ const start={action:'start',header:{...catalog,folders:catalog.folders.length,photos:catalog.photos.length,sources:catalog.sources.length,drawings:catalog.drawings.length,personalSurveys:catalog.personalSurveys.length,manifestHash:hash}};
  assert.equal((await post(start)).status,200);const job=catalog.backupId;
  assert.equal((await t.request('/api/restore?job='+job,{headers:{cookie:''}})).status,401);
  assert.equal((await post({action:'finish',job})).status,409);
- const records=Object.entries({folder:catalog.folders,photo:catalog.photos,source:catalog.sources,drawing:catalog.drawings,file:files}).flatMap(([kind,items])=>items.map((value,position)=>({kind,value,position})));
+ const records=Object.entries({folder:catalog.folders,photo:catalog.photos,source:catalog.sources,drawing:catalog.drawings,survey:catalog.personalSurveys,file:files}).flatMap(([kind,items])=>items.map((value,position)=>({kind,value,position})));
  assert.equal((await post({action:'records',job,records})).status,200);
  assert.equal((await post({action:'records',job,records})).status,200);
  assert.equal((await post({action:'finish',job})).status,409);
@@ -31,6 +34,10 @@ try{
  const restored=folders.find(f=>f.id!=='fixture');assert.equal(restored.remarks,'보존할 비고');assert.equal(restored.surveyStatus,'완료');assert.equal(restored.drawingCount,1);assert.ok(restored.region.startsWith('복원 '));
  const restoredPhoto=await t.db.prepare('SELECT * FROM photos WHERE folder=?').bind(restored.id).first();assert.deepEqual(Buffer.from(await (await (await t.mf.getR2Bucket('BUCKET')).get(restoredPhoto.object_key)).arrayBuffer()),png);
  const restoredDraft=await t.db.prepare('SELECT * FROM drawing_drafts WHERE photo_id=?').bind(restoredPhoto.id).first();assert.deepEqual(JSON.parse(restoredDraft.draft),draft);assert.equal(restoredDraft.revision,3);
+ assert.deepEqual(JSON.parse(restoredPhoto.created_by),{...p.createdBy,restored:true});assert.deepEqual(JSON.parse(restoredDraft.updated_by),{...writer,restored:true});assert.equal(restoredPhoto.restored,1);assert.equal(restored.createdBy,undefined);const activity=await(await t.request('/api/activity?action=restore.completed')).json();assert.equal(activity.entries.length,1);assert.equal(activity.entries[0].actorId,'admin');assert.ok(!JSON.stringify(catalog).includes('password_hash'));
+ assert.deepEqual(restored.scheduleUpdatedBy,{...writer,restored:true});assert.deepEqual(restored.surveyUpdatedBy,{...writer,restored:true});
+ const personal=await t.db.prepare('SELECT actor_id,remarks,restored FROM personal_survey_records WHERE folder_id=? ORDER BY actor_id').bind(restored.id).all();assert.equal(personal.results.length,2);assert.equal(personal.results[0].remarks,'A의 별도 저장 내용');assert.ok(personal.results.every(r=>r.restored===1));
+ assert.equal((await t.request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id:restored.id,revision:restored.revision,remarks:'복원 후 새 조사 기록',buildingDetails:'',surveyStatus:'완료'})})).status,200);const afterEdit=(await(await t.request('/api/library?folder='+restored.id)).json()).folders[0];assert.equal(afterEdit.surveyUpdatedBy.id,'admin');assert.equal(afterEdit.surveyUpdatedBy.restored,undefined);assert.equal(afterEdit.scheduleUpdatedBy.restored,true);
  assert.equal((await t.db.prepare('SELECT COUNT(*) n FROM schedule_imports').first()).n,2);
  assert.equal((await t.request('/api/restore?job='+job,{method:'DELETE'})).status,409);
  const cancelledId=crypto.randomUUID(),cancelStart={...start,header:{...start.header,backupId:cancelledId}};
@@ -39,5 +46,7 @@ try{
  assert.equal((await post({action:'finish',job:cancelledId})).status,409);
  assert.equal((await t.request('/api/restore?job='+cancelledId,{method:'DELETE'})).status,200);
  assert.equal((await t.db.prepare('SELECT COUNT(*) n FROM survey_folders').first()).n,2);
- console.log('PASS: complete originals/metadata/drawing round trip, hash rejection, hidden staging, idempotent retry and owner guard');
+ const legacy=validateBackup({format:'hana-backup',version:1,backupId:crypto.randomUUID(),createdAt:catalog.createdAt,folders:[catalog.folders[0]],photos:[],sources:[],drawings:[],files:[]}),legacyHash=await sha256(new TextEncoder().encode(JSON.stringify(legacy)));assert.equal(legacy.personalSurveys,undefined);
+ assert.equal((await post({action:'start',header:{format:legacy.format,version:legacy.version,backupId:legacy.backupId,createdAt:legacy.createdAt,manifestHash:legacyHash,folders:1,photos:0,sources:0,drawings:0}})).status,200);assert.equal((await post({action:'records',job:legacy.backupId,records:[{kind:'folder',position:0,value:legacy.folders[0]}]})).status,200);assert.equal((await post({action:'finish',job:legacy.backupId})).status,200,'old manifests without personal surveys retain canonical hashes and restore successfully');
+ console.log('PASS: complete originals/metadata/drawing/personal-record round trip, legacy manifest restore, hash rejection, hidden staging, idempotent retry and owner guard');
 }finally{await t.close();}

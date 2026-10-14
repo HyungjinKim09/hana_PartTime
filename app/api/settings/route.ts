@@ -1,10 +1,10 @@
 import {z} from 'zod';
-import {ApiError,failure,identity,json,limitedBody,requireSameOrigin,storage} from '@/lib/storage';
+import {ApiError,failure,identity,identityUser,json,limitedBody,requireSameOrigin,storage} from '@/lib/storage';
 import {allowLogin,validAdminKey} from '@/lib/site-auth';
 import {budgetUsage} from '@/lib/r2-budget';
 export async function GET(){try{await identity();return json(await budgetUsage(storage().db));}catch(e){return failure(e);}}
 export async function PUT(request:Request){try{
- requireSameOrigin(request);await identity(request);
+ requireSameOrigin(request);if(!(await identityUser(request)).isAdmin)throw new ApiError('관리자만 저장 한도를 변경할 수 있습니다.',403);
  if(!await allowLogin(request,'settings'))throw new ApiError('설정 시도가 많습니다. 잠시 후 다시 시도해 주세요.',429);
  if(!await validAdminKey(request.headers.get('x-admin-key')||''))throw new ApiError('관리 키를 확인해 주세요.',403);
  const parsed=z.object({storageGB:z.number().finite().min(1).max(1000),acknowledgeCost:z.boolean()}).strict().safeParse(JSON.parse(new TextDecoder().decode(await limitedBody(request,2000))));

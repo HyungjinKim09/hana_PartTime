@@ -32,10 +32,10 @@ export async function inspectBackup(root:BackupDirectory,signal:AbortSignal,prog
  return manifest;
 }
 export async function restoreBackup(root:BackupDirectory,manifest:BackupManifest,signal:AbortSignal,progress:Progress){
- const header={format:manifest.format,version:manifest.version,backupId:manifest.backupId,createdAt:manifest.createdAt,manifestHash:await sha256(new TextEncoder().encode(JSON.stringify(manifest))),folders:manifest.folders.length,photos:manifest.photos.length,sources:manifest.sources.length,drawings:manifest.drawings.length};
+ const header={format:manifest.format,version:manifest.version,backupId:manifest.backupId,createdAt:manifest.createdAt,manifestHash:await sha256(new TextEncoder().encode(JSON.stringify(manifest))),folders:manifest.folders.length,photos:manifest.photos.length,sources:manifest.sources.length,drawings:manifest.drawings.length,personalSurveys:manifest.personalSurveys?.length};
  const started=await backupRequest('/api/restore',{action:'start',header},signal),job=manifest.backupId;
  if(started.status==='complete'){progress('이미 복원 완료한 백업입니다. 중복 자료를 만들지 않았습니다.');return;}
- const groups={folder:manifest.folders,photo:manifest.photos,source:manifest.sources,drawing:manifest.drawings,file:manifest.files};
+ const groups={folder:manifest.folders,photo:manifest.photos,source:manifest.sources,drawing:manifest.drawings,survey:manifest.personalSurveys||[],file:manifest.files};
  let chunk:unknown[]=[],length=0;
  for(const [kind,values] of Object.entries(groups))for(const [position,value] of values.entries()){
   const record={kind,position,value},size=JSON.stringify(record).length*3;

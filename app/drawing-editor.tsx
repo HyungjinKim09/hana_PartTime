@@ -1,5 +1,7 @@
 "use client";
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {AttributionLabel} from './attribution-label';
+import type {Attribution} from '@/lib/attribution';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {drawingSchema,drawingMetadataSchema,drawingBounds,type DrawingDraft} from '@/lib/drawing';
 import {rotateCanvas,rotateCrop,rotateQuad,textExclusionBox,drawingLabelReviewImage,rotationTransform,type Rotation} from '@/lib/drawing-image';
@@ -17,6 +19,7 @@ type Tool='select'|'solid'|'dashed'|'text';
 const empty=():DrawingDraft=>({version:1,widthMeters:null,heightMeters:null,lines:[],labels:[],warnings:[]});
 const TRACE_REVISION=5;
 export function DrawingEditor({photo,onClose}:{photo:Photo;onClose:()=>void}){
+  const [updatedBy,setUpdatedBy]=useState<Attribution|undefined>();
   const [draft,setDraft]=useState<DrawingDraft>(empty),[revision,setRevision]=useState(0),[dirty,setDirty]=useState(false);
   const [busy,setBusy]=useState('불러오는 중…'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[aiAvailable,setAiAvailable]=useState(false);
   const [overlay,setOverlay]=useState(true);
@@ -34,10 +37,10 @@ export function DrawingEditor({photo,onClose}:{photo:Photo;onClose:()=>void}){
     const controller=new AbortController();let url='';
     void (async()=>{try{
       const [metadata,original]=await Promise.all([fetch(api,{signal:controller.signal}),fetch('/api/photos/'+photo.id,{signal:controller.signal})]);
-      const data=await metadata.json() as {error?:string;draft:unknown;revision:number;aiAvailable:boolean};if(!metadata.ok)throw new Error(data.error||'도면을 열지 못했습니다.');
+      const data=await metadata.json() as {error?:string;draft:unknown;revision:number;updatedBy?:Attribution;aiAvailable:boolean};if(!metadata.ok)throw new Error(data.error||'도면을 열지 못했습니다.');
       if(!original.ok)throw new Error('원본 사진을 열지 못했습니다.');
       const blob=await original.blob();if(controller.signal.aborted)return;
-      url=URL.createObjectURL(blob);setImage(url);setDraft(data.draft?drawingSchema.parse(data.draft):empty());if(data.draft){const loaded=drawingSchema.parse(data.draft);if(loaded.source){setCrop(loaded.source.crop);setRotation(loaded.source.rotation);setQuad(loaded.source.quad||[]);}}setRevision(data.revision);setAiAvailable(data.aiAvailable);
+      url=URL.createObjectURL(blob);setImage(url);setDraft(data.draft?drawingSchema.parse(data.draft):empty());if(data.draft){const loaded=drawingSchema.parse(data.draft);if(loaded.source){setCrop(loaded.source.crop);setRotation(loaded.source.rotation);setQuad(loaded.source.quad||[]);}}setRevision(data.revision);setUpdatedBy(data.updatedBy);setAiAvailable(data.aiAvailable);
     }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:'도면을 열지 못했습니다.');}finally{if(!controller.signal.aborted)setBusy('');}})();
     return()=>{controller.abort();generation.current++;if(url)URL.revokeObjectURL(url);};
   },[api,photo.id]);
@@ -110,7 +113,7 @@ export function DrawingEditor({photo,onClose}:{photo:Photo;onClose:()=>void}){
   async function save(){
     if(lock.current)return;lock.current=true;setBusy('저장 중…');setError('');
     try{const checked=drawingSchema.safeParse(draft);if(!checked.success)throw new Error('선이 한 개 이상 필요합니다. 좌표와 치수를 확인해 주세요.');
-      const response=await fetch(api,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:checked.data,revision})});const data=await response.json() as {error?:string;draft:unknown;revision:number};if(!response.ok)throw new Error(data.error||'저장에 실패했습니다.');setRevision(data.revision);setDirty(false);setNotice('도면을 저장했습니다. 다시 열어 계속 편집할 수 있습니다.');
+      const response=await fetch(api,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:checked.data,revision})});const data=await response.json() as {error?:string;draft:unknown;revision:number;updatedBy?:Attribution};if(!response.ok)throw new Error(data.error||'저장에 실패했습니다.');setRevision(data.revision);setUpdatedBy(data.updatedBy);setDirty(false);setNotice('도면을 저장했습니다. 다시 열어 계속 편집할 수 있습니다.');
     }catch(e){setError(e instanceof Error?e.message:'저장에 실패했습니다.');}finally{lock.current=false;setBusy('');}
   }
   async function download(){try{setError('');const {createVisio}=await import('@/lib/visio');const bytes=createVisio(draft),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.ms-visio.drawing'}));const a=document.createElement('a');a.href=url;a.download=safeFilename(photo.filename.replace(/\.[^.]+$/,''))+'_도면.vsdx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);setNotice('비지오 다운로드를 요청했습니다. 브라우저 다운로드 목록을 확인해 주세요. 사이트에서 이어서 편집하려면 도면 저장을 눌러 주세요.');}catch(e){setError(e instanceof Error?e.message:'비지오 파일을 만들지 못했습니다.');}}
@@ -140,7 +143,7 @@ export function DrawingEditor({photo,onClose}:{photo:Photo;onClose:()=>void}){
   }
   return <Dialog open onOpenChange={open=>{if(!open)close();}}><DialogContent className="drawing-dialog" onInteractOutside={e=>e.preventDefault()} onEscapeKeyDown={e=>{if(busy||dirty)e.preventDefault();}}><DialogHeader><DialogTitle>자동 도면 · 비지오 편집</DialogTitle><DialogDescription>{photo.filename} · 실선은 외곽, 점선은 내부 구분입니다. 문·창문은 추가하지 않습니다.</DialogDescription></DialogHeader>
     {error&&<p className="error-banner" role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
-    <div className="drawing-actions"><button className="primary-button" disabled={!!busy||picking||!imageReady||!aiAvailable} onClick={()=>void recognize()}>방향·치수 자동 인식</button><button className="secondary-button" disabled={!!busy||picking||!imageReady} onClick={()=>void recognize(false)}>사진 선만 추출</button><button className="secondary-button" disabled={!!busy||!dirty} onClick={()=>void save()}>도면 저장</button><button className="secondary-button" disabled={!!busy||!draft.lines.length} onClick={()=>void download()}>비지오(.vsdx) 다운로드</button><button className="subtle-button" disabled={!!busy} onClick={close}>닫기</button></div>
+    <AttributionLabel value={updatedBy} label="최근 도면 저장"/><div className="drawing-actions"><button className="primary-button" disabled={!!busy||picking||!imageReady||!aiAvailable} onClick={()=>void recognize()}>방향·치수 자동 인식</button><button className="secondary-button" disabled={!!busy||picking||!imageReady} onClick={()=>void recognize(false)}>사진 선만 추출</button><button className="secondary-button" disabled={!!busy||!dirty} onClick={()=>void save()}>도면 저장</button><button className="secondary-button" disabled={!!busy||!draft.lines.length} onClick={()=>void download()}>비지오(.vsdx) 다운로드</button><button className="subtle-button" disabled={!!busy} onClick={close}>닫기</button></div>
     {busy&&<p role="status">{busy}</p>}{!busy&&!aiAvailable&&<p className="drawing-help">자동 인식 연결이 아직 설정되지 않았습니다. 선·글자 편집과 비지오 저장은 사용할 수 있습니다.</p>}
     <p className="drawing-help">자동 인식은 도면 사진을 Cloudflare AI로 전송합니다. 방향·글자 인식과 필요한 확대 확인에 AI 요청을 최대 3회 사용하며 하루 요청 한도는 20회입니다.</p>
     <div className="drawing-size"><label>베란다 포함 전체 가로(m)<input aria-label="전체 가로 미터" type="number" min="0.01" step="0.1" max="1000" disabled={!!busy} value={draft.widthMeters??''} onChange={e=>change({...draft,widthMeters:e.target.value?Number(e.target.value):null})}/></label><label>전체 세로(m)<input aria-label="전체 세로 미터" type="number" min="0.01" step="0.1" max="1000" disabled={!!busy} value={draft.heightMeters??''} onChange={e=>change({...draft,heightMeters:e.target.value?Number(e.target.value):null})}/></label><label>편집 확대<input aria-label="편집 확대" type="range" min="1" max="3" step="0.25" value={zoom} onChange={e=>setZoom(Number(e.target.value))}/></label></div>

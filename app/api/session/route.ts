@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {ApiError,failure,limitedBody} from '@/lib/storage';
+import {ApiError,failure,limitedBody,storage} from '@/lib/storage';
 import {allowLogin,equalHash,getAccount,issueSession,passwordHash,revokeSession,sessionHeaders} from '@/lib/site-auth';
 export const dynamic='force-dynamic';
 export function checkOrigin(request:Request){
@@ -12,9 +12,10 @@ export async function readCredentials(request:Request){
 export async function POST(request:Request){try{
   checkOrigin(request);if(!await allowLogin(request))throw new ApiError('로그인 시도가 많습니다. 15분 후 다시 시도해 주세요.',429);
   const input=await readCredentials(request),account=await getAccount();
-  const hash=await passwordHash(input.password,account?.salt||'unconfigured-account');
-  if(!account||!equalHash(hash,account.password_hash)||input.username!==account.username)throw new ApiError('아이디 또는 비밀번호를 확인해 주세요.',401);
-  const token=await issueSession(account.version);
+  const {db}=storage(),member=account?await db.prepare('SELECT id,salt,password_hash,version,active FROM site_members WHERE owner=? AND username=? COLLATE NOCASE').bind(account.owner,input.username).first<{id:string;salt:string;password_hash:string;version:number;active:number}>():null;
+  const hash=await passwordHash(input.password,member?.salt||account?.salt||'unconfigured-account');
+  if(!account||!equalHash(hash,member?.password_hash||account.password_hash)||(member?!member.active:input.username!==account.username))throw new ApiError('아이디 또는 비밀번호를 확인해 주세요.',401);
+  const token=await issueSession(account.version,member?.id||null,member?.version||1);
   return Response.json({ok:true},{headers:sessionHeaders(token)});
 }catch(e){return failure(e);}}
 export async function DELETE(request:Request){try{

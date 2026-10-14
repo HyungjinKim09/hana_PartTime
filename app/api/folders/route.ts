@@ -1,14 +1,15 @@
+import {attribution} from '@/lib/attribution';
 import {z} from 'zod';
-import {identity,storage,json,failure,limitedBody,ApiError} from '@/lib/storage';
+import {identity,identityUser,storage,json,failure,limitedBody,ApiError} from '@/lib/storage';
 import {findFolder} from '@/lib/folders';
 import {SURVEY_STATUSES} from '@/lib/daily-report';
 import {librarySelection,selectedFolderIds} from '@/lib/library-catalog';
 const update=z.object({id:z.string().min(1).max(150),revision:z.number().int().positive(),remarks:z.string().max(10000),buildingDetails:z.string().max(100),surveyStatus:z.enum(SURVEY_STATUSES)}).strict();
 export async function PATCH(request:Request){try{
-  const owner=await identity(request);const {db}=storage();
+  const user=await identityUser(request),owner=user.owner;const {db}=storage();
   let data;try{data=update.parse(JSON.parse(new TextDecoder().decode(await limitedBody(request,64000))));}catch{throw new ApiError('비고는 10,000자 이내로 입력하고 조사 상태를 확인해 주세요.');}
   if(!await findFolder(db,owner,data.id))throw new ApiError('폴더를 찾을 수 없습니다.',404);
-  const changed=await db.prepare('UPDATE survey_folders SET remarks=?, building_details=?, survey_status=?,revision=revision+1 WHERE owner=? AND id=? AND revision=? AND deleting=0 RETURNING revision').bind(data.remarks,data.buildingDetails.trim(),data.surveyStatus,owner,data.id,data.revision).first<{revision:number}>();
+  const changed=await db.prepare('UPDATE survey_folders SET remarks=?, building_details=?, survey_status=?,updated_by=?,survey_updated_by=?,revision=revision+1 WHERE owner=? AND id=? AND revision=? AND deleting=0 RETURNING revision').bind(data.remarks,data.buildingDetails.trim(),data.surveyStatus,attribution(user,'survey.updated'),attribution(user,'survey.updated'),owner,data.id,data.revision).first<{revision:number}>();
   if(!changed){const latest=await findFolder(db,owner,data.id);return json({error:'다른 기기에서 변경된 내용이 있습니다. 최신 내용과 비교한 뒤 다시 저장해 주세요.',latest:latest?{remarks:latest.remarks,buildingDetails:latest.building_details,surveyStatus:latest.survey_status,revision:latest.revision}:null},409);}
   return json({saved:true,revision:changed.revision});
 }catch(e){return failure(e);}}
@@ -29,7 +30,7 @@ export async function POST(request:Request){try{
 }catch(e){return failure(e);}}
 
 export async function DELETE(request:Request){try{
-  const owner=await identity(request);const {db,bucket}=storage();
+  const user=await identityUser(request),owner=user.owner;const {db,bucket}=storage();
   const params=new URL(request.url).searchParams,id=params.get('id'),region=params.get('region'),date=params.get('date');
   const bulk=params.get('batch')==='1';
   if(!bulk&&!id&&!region)throw new ApiError('삭제할 폴더를 선택해 주세요.');
@@ -44,7 +45,7 @@ export async function DELETE(request:Request){try{
     else {const next=z.object({folderIds:z.array(z.string().min(1).max(150)).min(1).max(10000),sourceIds:z.array(z.string().max(150)).max(10000)}).strict().safeParse(payload);if(!next.success)throw new ApiError('삭제 진행 정보를 확인해 주세요.');continuation=next.data;}
   }else if(request.headers.get('content-type')?.split(';')[0].trim()==='application/json'){try{continuation=z.object({folderIds:z.array(z.string().max(150)).max(10000),sourceIds:z.array(z.string().max(150)).max(10000)}).parse(JSON.parse(new TextDecoder().decode(await limitedBody(request,2*1024*1024))));}catch{throw new ApiError('삭제 진행 정보를 확인해 주세요.');}}
   const marked=continuation?null:await db.batch<{id:string;object_key:string}>([
-    db.prepare(`UPDATE survey_folders SET deleting=1 WHERE ${where} RETURNING id`).bind(...values),
+    db.prepare(`UPDATE survey_folders SET deleting=1,deleted_by=COALESCE(deleted_by,?) WHERE ${where} RETURNING id`).bind(attribution(user),...values),
     db.prepare(`UPDATE photos SET deleted=1 WHERE owner=? AND folder IN (SELECT id FROM survey_folders WHERE ${where}) RETURNING id,object_key`).bind(owner,...values),
     bulk?db.prepare(`UPDATE schedule_imports SET deleted=1 WHERE owner=? AND (region,survey_date) IN (SELECT region,survey_date FROM survey_folders WHERE ${where}) AND NOT EXISTS (SELECT 1 FROM survey_folders f WHERE f.owner=schedule_imports.owner AND f.region=schedule_imports.region AND f.survey_date=schedule_imports.survey_date AND f.deleting=0) RETURNING id,object_key`).bind(owner,...values):id?db.prepare('UPDATE schedule_imports SET deleted=1 WHERE owner=? AND (region,survey_date) IN (SELECT region,survey_date FROM survey_folders WHERE owner=? AND id=?) AND NOT EXISTS (SELECT 1 FROM survey_folders f WHERE f.owner=schedule_imports.owner AND f.region=schedule_imports.region AND f.survey_date=schedule_imports.survey_date AND f.deleting=0) RETURNING id,object_key').bind(owner,owner,id):db.prepare(`UPDATE schedule_imports SET deleted=1 WHERE ${where} RETURNING id,object_key`).bind(...values),
   ]);

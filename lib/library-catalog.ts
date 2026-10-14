@@ -4,6 +4,7 @@ import {addressNodes,addressParts,matchingAddress,withinAddress} from './address
 import {searchFolders} from './folder-search';
 import {folderLabel,type Folder} from './types';
 import type {LibraryCard,LibraryPage,LibrarySelection,LibrarySummary} from './library-types';
+import {surveyParticipants,type ParticipantScope} from './survey-participants';
 
 const join=' FROM survey_folders f LEFT JOIN folder_stats p ON p.owner=f.owner AND p.folder=f.id ';
 const stats='COALESCE(p.count,0) AS count,COALESCE(p.bytes,0) AS bytes,COALESCE(p.photo_count,0) AS photo_count,COALESCE(p.photo_bytes,0) AS photo_bytes,COALESCE(p.drawing_count,0) AS drawing_count';
@@ -28,7 +29,7 @@ export async function selectedFolderIds(db:D1Database,owner:string,scope:Library
  const rows=await candidates(db,owner,scope);return rows.map(f=>f.id);
 }
 export async function libraryNavigation(db:D1Database,owner:string,region?:string){const [regions,dates]=await Promise.all([db.prepare('SELECT region FROM survey_folders WHERE owner=? AND deleting=0 GROUP BY region ORDER BY region').bind(owner).all<{region:string}>(),region?db.prepare('SELECT survey_date AS date,COUNT(*) AS schedules FROM survey_folders WHERE owner=? AND region=? AND deleting=0 GROUP BY survey_date ORDER BY survey_date DESC').bind(owner,region).all<{date:string;schedules:number}>():Promise.resolve({results:[]})]);return {regions:regions.results.map(f=>f.region),dates:dates.results};}
-export async function libraryCatalog(db:D1Database,owner:string,params:URLSearchParams):Promise<Omit<LibraryPage,'photos'|'nextCursor'>>{
+async function catalog(db:D1Database,owner:string,params:URLSearchParams):Promise<Omit<LibraryPage,'photos'|'nextCursor'>>{
  const scope=librarySelection(params),limit=Number(params.get('limit')||60),raw=params.get('foldersCursor')||'0',q=(params.get('q')||'').trim();
  if(!/^\d+$/.test(raw)||Number(raw)>100000||!Number.isInteger(limit)||limit<1||limit>100||q.length>150)throw new ApiError('폴더 페이지 범위를 확인해 주세요.');const offset=Number(raw);
  const base={folders:[] as Folder[],cards:[] as LibraryCard[],nextFoldersCursor:null as string|null,totalCards:0,summary:emptySummary(),pathLabels:[] as string[]};
@@ -48,4 +49,12 @@ export async function libraryCatalog(db:D1Database,owner:string,params:URLSearch
   cards=rows.results.map(({label,...summary})=>({key:label,label,leaf:false,target:{region:scope.region||label,date:scope.region?label:undefined,view:scope.view},summary,children:summary.schedules}));
  }
  return {...base,summary,cards:cards.slice(offset,offset+limit),totalCards:cards.length,nextFoldersCursor:offset+limit<cards.length?String(offset+limit):null,pathLabels,canonicalAddressPath,place:firstPlace};
+}
+export async function libraryCatalog(db:D1Database,owner:string,params:URLSearchParams):Promise<Omit<LibraryPage,'photos'|'nextCursor'>>{
+ const page=await catalog(db,owner,params),scope=librarySelection(params),scopes:ParticipantScope[]=[];
+ if(scope.folder)scopes.push({key:'summary',folder:scope.folder});
+ else if(scope.region&&scope.date)scopes.push({key:'summary',region:scope.region,date:scope.date});
+ page.cards.forEach((card,index)=>{const {folder,region,date}=card.target;if(folder||region&&date)scopes.push({key:'card:'+index,folder,region,date});});
+ const people=await surveyParticipants(db,owner,scopes);
+ return {...page,summary:people.has('summary')?{...page.summary,participants:people.get('summary')}:page.summary,cards:page.cards.map((card,index)=>people.has('card:'+index)?{...card,summary:{...card.summary,participants:people.get('card:'+index)}}:card)};
 }

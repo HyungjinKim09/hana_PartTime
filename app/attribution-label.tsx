@@ -1,0 +1,2 @@
+import type {Attribution} from '@/lib/attribution';
+export function AttributionLabel({value,label='작업자'}:{value?:Attribution;label?:string}){return <small className="attribution-label">{value?<>{value.restored?'백업 원 기록 · ':''}{label} {value.name} · {new Date(value.at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</>:`${label} · 기존 자료는 작업자 기록 없음`}</small>;}

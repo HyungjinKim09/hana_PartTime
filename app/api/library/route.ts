@@ -1,7 +1,8 @@
+import {attribution,parseAttribution,attributed} from '@/lib/attribution';
 import {matchingAddress} from '@/lib/address-folders';
 import {findFolder} from '@/lib/folders';
 import {libraryCatalog,libraryNavigation,librarySelection} from '@/lib/library-catalog';
-import {ApiError,failure,identity,json,storage,limitedBody,imageType} from '@/lib/storage';
+import {ApiError,failure,identity,identityUser,json,storage,limitedBody,imageType} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
 import {budgetUsage} from '@/lib/r2-budget';
 import {claimUpload} from '@/lib/upload-receipt';
@@ -29,15 +30,15 @@ export async function GET(request:Request){try{
     }
   }
   let photos:Record<string,unknown>[]=[],nextCursor:string|null=null;
-  if(ids.length){const values:unknown[]=[owner,JSON.stringify(ids)];let where='owner=? AND folder IN (SELECT value FROM json_each(?)) AND deleted=0';if(kind){where+=' AND kind=?';values.push(kind);}if(cursor){where+=' AND (created_at<? OR (created_at=? AND id<?))';values.push(cursor.created,cursor.created,cursor.id);}const rows=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail FROM photos WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`).bind(...values,limit+1).all();photos=rows.results.slice(0,limit);if(rows.results.length>limit){const last=photos[photos.length-1];nextCursor=JSON.stringify({created:last.created_at,id:last.id});}}
-  if(photosOnly)return json({photos,nextCursor});
+  if(ids.length){const values:unknown[]=[owner,JSON.stringify(ids)];let where='owner=? AND folder IN (SELECT value FROM json_each(?)) AND deleted=0';if(kind){where+=' AND kind=?';values.push(kind);}if(cursor){where+=' AND (created_at<? OR (created_at=? AND id<?))';values.push(cursor.created,cursor.created,cursor.id);}const rows=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail,created_by,restored FROM photos WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`).bind(...values,limit+1).all();photos=rows.results.slice(0,limit);if(rows.results.length>limit){const last=photos[photos.length-1];nextCursor=JSON.stringify({created:last.created_at,id:last.id});}}
+  if(photosOnly)return json({photos:photos.map(attributed),nextCursor});
   const catalog=await libraryCatalog(db,owner,params);
-  return json({...catalog,photos,nextCursor});
+  return json({...catalog,photos:photos.map(attributed),nextCursor});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
   const started=performance.now(),timings:string[]=[];let checkpoint=started;
   const mark=(name:string)=>{const now=performance.now();timings.push(`${name};dur=${(now-checkpoint).toFixed(1)}`);checkpoint=now;};
-  const owner=await identity(request);const {db,bucket}=storage();const url=new URL(request.url);
+  const user=await identityUser(request),owner=user.owner;const {db,bucket}=storage();const url=new URL(request.url);
   mark('auth');
   const folder=url.searchParams.get('folder');
   const kind=url.searchParams.get('kind')||'photo';
@@ -49,13 +50,13 @@ export async function POST(request:Request){try{
   mark('body');
   const uploadId=request.headers.get('x-upload-id')||crypto.randomUUID();
   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(uploadId))throw new ApiError('업로드 작업 번호가 올바르지 않습니다.');
-  const claimed=await claimUpload(db,owner,uploadId,folder,kind,filename,bytes);
+  const claimed=await claimUpload(db,owner,uploadId,folder,kind,filename,bytes,undefined,attribution(user));
   if(claimed.photo)return json({photo:claimed.photo},200);
   const {id,key,attempt}=claimed,created=new Date().toISOString();
   try {
     await bucket.put(key,bytes,{httpMetadata:{contentType:type}});mark('storage');
     const result=await db.batch([
-      db.prepare("INSERT INTO photos (id,owner,folder,filename,object_key,content_type,size,created_at,kind) SELECT ?,?,?,?,?,?,?,?,? FROM upload_receipts WHERE owner=? AND id=? AND state='writing' AND attempt=? AND EXISTS(SELECT 1 FROM survey_folders WHERE owner=? AND id=? AND deleting=0)").bind(id,owner,folder,filename,key,type,bytes.length,created,kind,owner,uploadId,attempt,owner,folder),
+      db.prepare("INSERT INTO photos (id,owner,folder,filename,object_key,content_type,size,created_at,kind,created_by) SELECT ?,?,?,?,?,?,?,?,?,actor FROM upload_receipts WHERE owner=? AND id=? AND state='writing' AND attempt=? AND EXISTS(SELECT 1 FROM survey_folders WHERE owner=? AND id=? AND deleting=0)").bind(id,owner,folder,filename,key,type,bytes.length,created,kind,owner,uploadId,attempt,owner,folder),
       db.prepare("UPDATE upload_receipts SET state='saved' WHERE owner=? AND id=? AND attempt=? AND EXISTS(SELECT 1 FROM photos WHERE owner=? AND id=? AND object_key=?)").bind(owner,uploadId,attempt,owner,id,key),
     ]);
     if(!result[0].meta.changes)throw new ApiError('업로드 작업이 갱신됐습니다. 같은 사진으로 다시 시도해 주세요.',409);
@@ -67,13 +68,13 @@ export async function POST(request:Request){try{
     throw e;
   }
   mark('metadata');
-  const response=json({photo:{id,folder,kind,filename,content_type:type,size:bytes.length,created_at:created}},201);
+  const response=json({photo:{id,folder,kind,filename,content_type:type,size:bytes.length,created_at:created,createdBy:parseAttribution(claimed.actor)}},201);
   response.headers.set('Server-Timing',[...timings,`upload;dur=${(performance.now()-started).toFixed(1)}`].join(', '));
   return response;
 }catch(e){return failure(e);}}
 export async function DELETE(request:Request){try{
-  const owner=await identity(request);const {db,bucket}=storage();const id=new URL(request.url).searchParams.get('id');
-  const photo=await db.prepare('UPDATE photos SET deleted=1 WHERE id=? AND owner=? RETURNING object_key,thumbnail_key').bind(id||'',owner).first<{object_key:string;thumbnail_key:string|null}>();
+  const user=await identityUser(request),owner=user.owner;const {db,bucket}=storage();const id=new URL(request.url).searchParams.get('id');
+  const photo=await db.prepare('UPDATE photos SET deleted=1,deleted_by=COALESCE(deleted_by,?) WHERE id=? AND owner=? RETURNING object_key,thumbnail_key').bind(attribution(user),id||'',owner).first<{object_key:string;thumbnail_key:string|null}>();
   if(!photo) throw new ApiError('사진을 찾을 수 없습니다.',404);
   // Hide metadata durably first: a failed later cleanup cannot break the gallery or ZIP.
   // A retained tombstone allows the same DELETE request to safely retry cleanup.

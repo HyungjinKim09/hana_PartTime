@@ -7,6 +7,13 @@ import {guardedBucket,BudgetError} from '../lib/r2-budget';
 // adds per-chunk CPU cost, which can terminate large downloads on Workers Free.
 async function handle(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
     const path=new URL(request.url).pathname;
+    const expected=request.headers.get('x-hana-identity');
+    if(expected&&path.startsWith('/api/')){
+      if(!env.DB)return Response.json({error:'로그인 상태를 확인하지 못했습니다.'},{status:503});
+      const actor=await lookupSession(env.DB,request.headers.get('cookie')||'');
+      if(!actor)return Response.json({error:'로그인 후 다시 시도해 주세요.'},{status:401,headers:{'Cache-Control':'no-store'}});
+      if(expected!==(actor.memberId?actor.owner+'/'+actor.memberId:actor.owner))return Response.json({code:'identity_changed',error:'로그인 계정이 변경되었습니다. 화면을 다시 열어 주세요.'},{status:409,headers:{'Cache-Control':'no-store'}});
+    }
     if(!path.startsWith('/api/export/'))return app.fetch(request,env,ctx);
     const headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'};
     const error=(message:string,status:number)=>Response.json({error:message},{status,headers});

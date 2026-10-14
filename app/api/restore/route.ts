@@ -1,4 +1,5 @@
-import {ApiError,failure,identity,json,limitedBody,requireSameOrigin,storage,imageType} from '@/lib/storage';
+import {attribution} from '@/lib/attribution';
+import {ApiError,failure,identity,identityUser,json,limitedBody,requireSameOrigin,storage,imageType} from '@/lib/storage';
 import {recordSchemas,restoreHeaderSchema,restoreJob,publishRestore,type RecordKind} from '@/lib/restore';
 import {sha256} from '@/lib/backup-format';
 import {claimUpload} from '@/lib/upload-receipt';
@@ -11,21 +12,21 @@ export async function GET(request:Request){try{
  return json({status:job.status,prefix:job.prefix,saved:saved.results});
 }catch(e){return failure(e);}}
 export async function POST(request:Request){try{
- requireSameOrigin(request);const owner=await identity(request),{db}=storage();
+ requireSameOrigin(request);const user=await identityUser(request),owner=user.owner,{db}=storage();
  const input=JSON.parse(new TextDecoder().decode(await limitedBody(request,1500000)));
  if(input.action==='start'){
   const header=restoreHeaderSchema.parse(input.header),id=header.backupId;
   const catalog={format:header.format,version:header.version,backupId:id,createdAt:header.createdAt};
-  await db.prepare("INSERT INTO restore_jobs(owner,id,manifest_hash,prefix,status,header,folders,photos,sources,drawings,created_at) VALUES(?,?,?,?,'open',?,?,?,?,?,?) ON CONFLICT DO NOTHING").bind(owner,id,header.manifestHash,`복원 ${new Date().toISOString().slice(0,5)}-${id.slice(0,8)} · `,JSON.stringify(catalog),header.folders,header.photos,header.sources,header.drawings,new Date().toISOString()).run();
-  const job=await restoreJob(db,owner,id);if(job.manifest_hash!==header.manifestHash||job.folders!==header.folders||job.photos!==header.photos||job.sources!==header.sources||job.drawings!==header.drawings)throw new ApiError('다른 내용의 복원 작업이 이미 있습니다.',409);
+  await db.prepare("INSERT INTO restore_jobs(owner,id,manifest_hash,prefix,status,header,folders,photos,sources,drawings,created_at,personal_surveys) VALUES(?,?,?,?,'open',?,?,?,?,?,?,?) ON CONFLICT DO NOTHING").bind(owner,id,header.manifestHash,`복원 ${new Date().toISOString().slice(0,5)}-${id.slice(0,8)} · `,JSON.stringify(catalog),header.folders,header.photos,header.sources,header.drawings,new Date().toISOString(),header.personalSurveys??null).run();
+  const job=await restoreJob(db,owner,id);if(job.manifest_hash!==header.manifestHash||job.folders!==header.folders||job.photos!==header.photos||job.sources!==header.sources||job.drawings!==header.drawings||job.personal_surveys!==(header.personalSurveys??null))throw new ApiError('다른 내용의 복원 작업이 이미 있습니다.',409);
   return json({id,status:job.status,prefix:job.prefix});
  }
  const job=await restoreJob(db,owner,String(input.job||''));
  if(job.status==='complete')return json({status:'complete',prefix:job.prefix});
  if(job.status!=='open')throw new ApiError('취소 중인 복원 작업입니다.',409);
- if(input.action==='finish'){await publishRestore(db,owner,job);return json({status:'complete',prefix:job.prefix});}
+ if(input.action==='finish'){await publishRestore(db,owner,job,attribution(user));return json({status:'complete',prefix:job.prefix});}
  if(input.action!=='records'||!Array.isArray(input.records)||input.records.length>20)throw new ApiError('복원 목록을 확인해 주세요.');
- const limits={folder:job.folders,photo:job.photos,source:job.sources,drawing:job.drawings,file:job.photos+job.sources};
+ const limits={folder:job.folders,photo:job.photos,source:job.sources,drawing:job.drawings,survey:job.personal_surveys||0,file:job.photos+job.sources};
  for(const record of input.records){
   const kind=record.kind as RecordKind;if(!Object.hasOwn(recordSchemas,kind)||!Number.isInteger(record.position)||record.position<0||record.position>=limits[kind])throw new ApiError('복원 목록의 순서가 맞지 않습니다.');
   const value=recordSchemas[kind].parse(record.value),id=kind==='file'?`${(value as {kind:string}).kind}:${value.id}`:value.id,payload=JSON.stringify(value);
