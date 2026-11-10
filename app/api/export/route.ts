@@ -1,3 +1,4 @@
+import {archiveCompletionReceipt} from '@/lib/archive-completion';
 import {addressParts,matchingAddress,withinAddress} from '@/lib/address-folders';
 import {listFolders} from '@/lib/folders';
 import {exportFolderLabel} from '@/lib/daily-report';
@@ -69,5 +70,6 @@ export async function POST(request:Request){try{
   if(maxBytes!==null&&totalBytes>Number(maxBytes))throw new ApiError('이 브라우저에서는 한 번에 256MB까지 ZIP을 만들 수 있습니다. 날짜·폴더별로 나누거나 PC Chrome·Edge에서 다운로드해 주세요.',413);
   const tokens=await bucket.issueDownloads(owner,downloadKeys);let index=0;
   for(const entry of entries)if(entry.url!==null)entry.url='/api/export/'+tokens[index++];
-  return json({name,entries:entries.map(({name,size,url})=>({name,size,url})),totalBytes,files:downloadKeys.length});
+  const downloadReceipts=params.get('track')==='1'?await archiveCompletionReceipt(db,owner,folders,results,downloadKeys):undefined;
+  return json({downloadReceipts,downloadReceipt:downloadReceipts?.[0],name,entries:entries.map(({name,size,url})=>({name,size,url})),totalBytes,files:downloadKeys.length});
 }catch(e){return failure(e);}}

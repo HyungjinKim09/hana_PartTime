@@ -16,7 +16,7 @@ export async function downloadArchive(query:URLSearchParams,signal:AbortSignal,o
   if(handle){
     // pipeTo aborts the temporary file on any missing/truncated original or cancellation.
     await stream.pipeTo(await handle.createWritable(),{signal});
-    return 'saved' as const;
+    return {result:'saved' as const,receipts:data.downloadReceipts||(data.downloadReceipt?[data.downloadReceipt]:[])};
   }
   // Mobile/Firefox fallback: only publish a link after the complete ZIP validates.
   const blob=await new Response(stream,{headers:{'Content-Type':'application/zip'}}).blob();
@@ -24,5 +24,5 @@ export async function downloadArchive(query:URLSearchParams,signal:AbortSignal,o
   const url=URL.createObjectURL(blob),link=document.createElement('a');
   link.href=url;link.download=data.name;document.body.appendChild(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(url),60000);
-  return 'download' as const;
+  return {result:'download' as const,receipts:data.downloadReceipts||(data.downloadReceipt?[data.downloadReceipt]:[])};
 }

@@ -1,4 +1,4 @@
-export type ExportManifest={name:string;totalBytes:number;files:number;entries:{name:string;size:number;url:string|null}[]};
+export type ExportManifest={downloadReceipts?:string[];downloadReceipt?:string;name:string;totalBytes:number;files:number;entries:{name:string;size:number;url:string|null}[]};
 const MAX_PREFETCH=3,MAX_BUFFER_BYTES=32*1024*1024;
 type Outcome={bytes:Uint8Array;error?:never}|{error:unknown;bytes?:never};
 export function exportEntries(manifest:ExportManifest,request:typeof fetch,signal?:AbortSignal,onProgress?:(bytes:number)=>void){

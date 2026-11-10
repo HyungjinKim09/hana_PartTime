@@ -8,7 +8,7 @@ export async function GET(){try{
   db.prepare('SELECT id,folder,kind,filename,content_type,size,created_at,created_by FROM photos WHERE owner=? AND deleted=0 AND folder IN(SELECT id FROM survey_folders WHERE owner=? AND deleting=0)').bind(owner,owner),
   db.prepare('SELECT id,filename,content_type,size,draft,region,survey_date AS date,created_at,created_by FROM schedule_imports WHERE owner=? AND deleted=0').bind(owner),
   db.prepare("SELECT d.photo_id AS id,d.draft,d.revision,d.updated_at,d.updated_by FROM drawing_drafts d JOIN photos p ON p.id=d.photo_id AND p.owner=d.owner JOIN survey_folders f ON f.owner=p.owner AND f.id=p.folder WHERE d.owner=? AND p.deleted=0 AND f.deleting=0").bind(owner),
-  db.prepare('SELECT * FROM survey_folders WHERE owner=? AND deleting=0 ORDER BY region,survey_date,id').bind(owner),
+  db.prepare('SELECT f.*,COALESCE(p.photo_count,0) AS photo_count FROM survey_folders f LEFT JOIN folder_stats p ON p.owner=f.owner AND p.folder=f.id WHERE f.owner=? AND f.deleting=0 ORDER BY f.region,f.survey_date,f.id').bind(owner),
   db.prepare("SELECT json_array(r.folder_id,r.actor_id) AS id,r.folder_id AS folder,r.actor_id,r.actor_name,r.updated_at,r.remarks,r.building_details AS buildingDetails,r.survey_status AS surveyStatus,r.restored FROM personal_survey_records r JOIN survey_folders f ON f.owner=r.owner AND f.id=r.folder_id WHERE r.owner=? AND f.deleting=0 ORDER BY r.folder_id,r.actor_id").bind(owner),
  ]);
  const folders=rows[3].results as unknown as FolderRow[];
