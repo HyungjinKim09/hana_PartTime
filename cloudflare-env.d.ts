@@ -8,5 +8,9 @@ declare namespace Cloudflare {
     SITE_DATA_OWNER?: string;
     DB?: D1Database;
     BUCKET?: R2Bucket;
+    AUTH_LOGIN_IP?: RateLimit;
+    AUTH_LOGIN_TOTAL?: RateLimit;
+    AUTH_SESSION_IP?: RateLimit;
+    AUTH_SESSION_TOTAL?: RateLimit;
   }
 }

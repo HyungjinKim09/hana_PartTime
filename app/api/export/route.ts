@@ -6,6 +6,7 @@ import {ApiError,failure,identity,storage,json,requireSameOrigin} from '@/lib/st
 import {safeFilename} from '@/lib/zip';
 import {archiveParts} from '@/lib/archive-parts';
 import {sha256} from '@/lib/backup-format';
+import {fieldPhotosForExport} from '@/lib/photo-page';
 export const dynamic='force-dynamic';
 export function GET(){return json({error:'다운로드 버튼에서 다시 시작해 주세요.'},405);}
 export async function POST(request:Request){try{
@@ -30,7 +31,7 @@ export async function POST(request:Request){try{
   if(view==='address')folders=folders.filter(f=>withinAddress(f,addressPath,view==='address'));
   if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
   let name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';
-  const {results}=await db.prepare("SELECT id,folder,filename,object_key,size FROM photos WHERE owner=? AND folder IN(SELECT value FROM json_each(?)) AND deleted=0 AND kind='photo' ORDER BY created_at,id").bind(owner,JSON.stringify(folders.map(f=>f.id))).all<{id:string;folder:string;filename:string;object_key:string;size:number}>();
+  const {results}=await fieldPhotosForExport(db,owner,folders.map(f=>f.id));
   let entries:{name:string;size:number;url:string|null;key?:string}[]=[];
   const byFolder=new Map<string,typeof results>();for(const photo of results){const rows=byFolder.get(photo.folder)||[];rows.push(photo);byFolder.set(photo.folder,rows);}
   if(photosOnly){

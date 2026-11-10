@@ -6,6 +6,7 @@ import {ApiError,failure,identity,identityUser,json,storage,limitedBody,imageTyp
 import {safeFilename} from '@/lib/zip';
 import {budgetUsage} from '@/lib/r2-budget';
 import {claimUpload} from '@/lib/upload-receipt';
+import {photoPage} from '@/lib/photo-page';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){try{
   const owner=await identity(request);const {db}=storage(),params=new URL(request.url).searchParams,folder=params.get('folder');
@@ -30,7 +31,7 @@ export async function GET(request:Request){try{
     }
   }
   let photos:Record<string,unknown>[]=[],nextCursor:string|null=null;
-  if(ids.length){const values:unknown[]=[owner,JSON.stringify(ids)];let where='owner=? AND folder IN (SELECT value FROM json_each(?)) AND deleted=0';if(kind){where+=' AND kind=?';values.push(kind);}if(cursor){where+=' AND (created_at<? OR (created_at=? AND id<?))';values.push(cursor.created,cursor.created,cursor.id);}const rows=await db.prepare(`SELECT id,folder,filename,content_type,size,created_at,kind,thumbnail_key IS NOT NULL AS has_thumbnail,created_by,restored FROM photos WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`).bind(...values,limit+1).all();photos=rows.results.slice(0,limit);if(rows.results.length>limit){const last=photos[photos.length-1];nextCursor=JSON.stringify({created:last.created_at,id:last.id});}}
+  if(ids.length)({photos,nextCursor}=await photoPage(db,owner,ids,kind,limit,cursor));
   if(photosOnly)return json({photos:photos.map(attributed),nextCursor});
   const catalog=await libraryCatalog(db,owner,params);
   return json({...catalog,photos:photos.map(attributed),nextCursor});

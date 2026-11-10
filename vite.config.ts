@@ -2,6 +2,7 @@ import vinext from 'vinext';
 import {defineConfig} from 'vite';
 import {cloudflare} from '@cloudflare/vite-plugin';
 import {existsSync,readFileSync} from 'node:fs';
+import {authRateLimits} from './cloudflare/auth-rate-config';
 
 const deploymentFile = './cloudflare/deployment.json';
 const deployment = existsSync(deploymentFile) ? JSON.parse(readFileSync(deploymentFile,'utf8')) : {};
@@ -16,6 +17,7 @@ export default defineConfig({
       compatibility_date:'2026-05-15',
       compatibility_flags:['nodejs_compat'],
       workers_dev:true,
+      ratelimits:authRateLimits,
       ...(deployment.account_id ? {account_id:deployment.account_id}:{}),
       d1_databases:[{binding:'DB',database_name:'hanaparttime-db',database_id:deployment.database_id || '00000000-0000-4000-8000-000000000000',migrations_dir:'./drizzle'}],
       r2_buckets:[{binding:'BUCKET',bucket_name:'hanaparttime-photos'}],
