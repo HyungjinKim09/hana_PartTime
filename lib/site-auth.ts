@@ -27,7 +27,7 @@ export async function issueSession(version:number,memberId:string|null=null,memb
   return createSession(db(),version,env.ADMIN_SETUP_KEY,memberId,memberVersion);
 }
 export async function revokeSession(request:Request){
-  return revokeTokens(db(),request.headers.get('cookie')||'');
+  return revokeTokens(db(),request.headers.get('cookie')||'',env.ADMIN_SETUP_KEY);
 }
 export async function allowLogin(request:Request,scope='login'){
   const now=Date.now(),window=Math.floor(now/900000);

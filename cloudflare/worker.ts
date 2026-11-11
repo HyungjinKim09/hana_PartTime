@@ -2,7 +2,7 @@ import app from 'vinext/server/fetch-handler';
 import {COOKIE,REFRESH_COOKIE,cookieValue,lookupSession} from '../lib/session-lookup';
 import {refreshSession,tokenCookies,upgradeLegacySession} from '../lib/refresh-sessions';
 import {guardedBucket,BudgetError} from '../lib/r2-budget';
-import {withSessionRequest,invalidateSessionLookup} from '../lib/session-context';
+import {withSessionRequest} from '../lib/session-context';
 import {authIngress} from '../lib/auth-ingress';
 
 // Return the native R2 stream directly. Framework transport of binary bodies
@@ -35,11 +35,17 @@ async function handle(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
     }
 }
 
+const signedReadPaths=new Set(['/', '/api/activity', '/api/drawings', '/api/identity', '/api/library',
+  '/api/my-work', '/api/report', '/api/schedules', '/api/settings', '/api/thumbnails']);
+function allowsSignedRead(request:Request,path:string){
+  return request.method==='GET'&&(signedReadPaths.has(path)||/^\/api\/photos\/[^/]+$/.test(path));
+}
+
 export default {
   async fetch(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
     const blocked=await authIngress(request,env);if(blocked)return blocked;
-    return withSessionRequest(async()=>{
     const path=new URL(request.url).pathname,cookies=request.headers.get('cookie')||'';
+    return withSessionRequest(async()=>{
     const authRoute=path==='/api/account'||path==='/api/session'||path.startsWith('/api/session/');
     const navigation=request.method==='GET'&&request.headers.get('sec-fetch-mode')==='navigate'&&request.headers.get('sec-fetch-dest')==='document';
     const sameOrigin=(!request.headers.get('origin')||request.headers.get('origin')===new URL(request.url).origin)&&(request.headers.get('sec-fetch-site')!=='cross-site'||navigation);
@@ -50,9 +56,6 @@ export default {
       if(hasRefresh&&await lookupSession(env.DB,cookies))return handle(request,env,ctx);
       const pair=hasRefresh?await refreshSession(env.DB,cookies,env.ADMIN_SETUP_KEY):await upgradeLegacySession(env.DB,cookies,env.ADMIN_SETUP_KEY);
       if(!pair)return handle(request,env,ctx);
-      // During refresh overlap, the same access token can gain a new expiry.
-      // Its preflight result is now stale even if the cookie bytes did not change.
-      invalidateSessionLookup(env.DB);
       const headers=new Headers(request.headers);
       headers.set('cookie',cookies.split(';').filter(part=>!part.trim().startsWith(COOKIE+'=')).concat(`${COOKIE}=${pair.access}`).join('; '));
       const response=await handle(new Request(request,{headers}),env,ctx);
@@ -63,6 +66,6 @@ export default {
     }catch{
       return Response.json({error:'로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'},{status:503,headers:{'Cache-Control':'no-store'}});
     }
-    });
+    },env.ADMIN_SETUP_KEY,allowsSignedRead(request,path));
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

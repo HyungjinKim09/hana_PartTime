@@ -42,10 +42,10 @@ try{
  assert.equal(combined.photos.length,58);assert.equal(new Set(combined.photos.map(p=>p.id)).size,58);
  assert.ok(combined.photos.every(p=>p.kind==='photo'&&p.id!=='cost-0-0'));
  assert.equal((await fieldPhotosForExport(measured,t.owner,['cost-0','cost-1'])).results.length,58,'ZIP excludes drawings/tombstones across address peers');
- queries=0;await withSessionRequest(async()=>{const users=await Promise.all(Array.from({length:3},()=>lookupSession(measured,t.cookie)));for(const user of users)assert.equal(user.owner,t.owner);});
+ queries=0;await withSessionRequest(async()=>{const users=await Promise.all(Array.from({length:3},()=>lookupSession(measured,t.cookie)));for(const user of users)assert.equal(user.owner,t.owner);},t.adminKey);
  assert.equal(queries,1,'real D1 verifies the same request once');
  await t.db.prepare('UPDATE site_sessions SET expires_at=0').run();
- assert.equal(await withSessionRequest(()=>lookupSession(measured,t.cookie)),null,'next request observes real D1 revocation');
+ assert.equal(await withSessionRequest(()=>lookupSession(measured,t.cookie),t.adminKey),null,'next request observes real D1 revocation');
  assert.equal(queries,2);
  await t.db.prepare(`INSERT INTO site_login_limits(key,attempts,expires_at) SELECT value,1,? FROM json_each(?)`).bind(Date.now()+3600000,JSON.stringify(Array.from({length:5000},(_,i)=>'cost-ip-'+i))).run();
  const cleanup=await t.db.prepare('DELETE FROM site_login_limits WHERE expires_at<?').bind(Date.now()).run();

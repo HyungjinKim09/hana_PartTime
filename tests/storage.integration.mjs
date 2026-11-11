@@ -380,9 +380,9 @@ try{
   console.log('PASS: bulk preview, deduplicated selection, continuation, storage cleanup, unselected schedules and shared originals preserved.');
   const newLogin=await login();const oldCookie=newLogin.headers.get('set-cookie').split(';')[0];
   const reset=await authRequest('/api/account',{...credentials,password:'changed-password-123'},{'x-admin-key':adminKey});assert.equal(reset.status,200);
-  assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:oldCookie}})).status,401,'Password reset revokes other devices');
+  assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/members',{headers:{cookie:oldCookie}})).status,401,'Password reset revokes other devices');
   assert.equal((await login()).status,401);const changed=await login('changed-password-123');assert.equal(changed.status,200);
-  await db.prepare('UPDATE site_sessions SET expires_at=0').run();assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/library',{headers:{cookie:changed.headers.get('set-cookie').split(';')[0]}})).status,401);
+  await db.prepare('UPDATE site_sessions SET expires_at=0').run();assert.equal((await mf.dispatchFetch('https://fieldnote.test/api/members',{headers:{cookie:changed.headers.get('set-cookie').split(';')[0]}})).status,401);
   for(let i=0;i<16;i++)await login('bad-password-long');assert.equal((await login()).status,429,'Brute-force throttling');
   const publicPage=await mf.dispatchFetch('https://fieldnote.test/');const publicText=await publicPage.text();assert.match(publicText,/개인 계정/);assert.ok(!publicText.includes('과정로73번길'));assert.ok(!publicText.includes('회원가입'));
   const adminPage=await mf.dispatchFetch('https://fieldnote.test/account/setup');const adminHtml=await adminPage.text();assert.equal(adminPage.status,200);assert.match(adminHtml,/관리 키/);assert.ok(!adminHtml.includes(adminKey));assert.ok(!adminHtml.includes('signin-with-chatgpt'));

@@ -1,3 +1,4 @@
+import {createHmac} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
@@ -21,4 +22,12 @@ export async function testRuntime(options={}){
  const request=(url,options={})=>mf.dispatchFetch(origin+url,{...options,headers:{cookie,origin,...options.headers}});
  const folder=async(id='fixture')=>db.prepare("INSERT INTO survey_folders(owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index) VALUES(?,?,'테스트','2026-09-23',?,'','','가상자료','[]','','',1,0)").bind(owner,id,id).run();
  return {mf,db,owner,adminKey,origin,cookie,request,folder,close:()=>mf.dispose()};
+}
+
+// Simulate signed-token expiry independently of the persisted revocation proof.
+export function expiredAccess(token,secret){
+ const [prefix,payload]=token.split('.');
+ const claims=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));
+ const body=prefix+'.'+Buffer.from(JSON.stringify({...claims,expires:Date.now()-1000})).toString('base64url');
+ return body+'.'+createHmac('sha256',secret).update(body).digest('base64url');
 }

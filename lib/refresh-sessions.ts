@@ -1,8 +1,11 @@
-import {COOKIE,REFRESH_COOKIE,cookieValue,digest,memberSessionValid} from './session-lookup';
+import {COOKIE,REFRESH_COOKIE,cookieValue,digest,lookupAccessProof,memberSessionValid} from './session-lookup';
 
-export const ACCESS_SECONDS=15*60,REFRESH_SECONDS=90*24*60*60;
+import {invalidateSessionLookup} from './session-context';
+import {ACCESS_SECONDS,signAccess,verifyAccess} from './signed-access';
+
+export const REFRESH_SECONDS=90*24*60*60;
 const OVERLAP_MS=60_000;
-type Pair={access:string;refresh:string;refreshSeconds:number};
+type Pair={access:string;accessSeconds:number;refresh:string;refreshSeconds:number};
 type Family={id:string;token_hash:string;previous_hash:string|null;previous_until:number;version:number;expires_at:number};
 const hex=(bytes:ArrayBuffer)=>Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');
 const random=()=>hex(crypto.getRandomValues(new Uint8Array(32)).buffer);
@@ -15,9 +18,19 @@ async function derive(secret:string|undefined,purpose:string,token:string){
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
   return hex(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode('hana-session-v1:'+purpose+':'+token)));
 }
+async function signedPair(db:D1Database,secret:string|undefined,proof:string,refresh:string,familyExpiry:number,now:number):Promise<Pair|null>{
+  invalidateSessionLookup(db);
+  const user=await lookupAccessProof(db,proof);
+  if(!user)return null;
+  // The rotation timestamp is stable across concurrent refreshes of a generation.
+  const expires=familyExpiry-REFRESH_SECONDS*1000+ACCESS_SECONDS*1000;
+  if(expires<=now)return null;
+  const access=await signAccess(secret,{proof,expires,user});
+  return {access,accessSeconds:Math.max(1,Math.ceil((expires-now)/1000)),refresh,refreshSeconds:Math.max(1,Math.floor((familyExpiry-now)/1000))};
+}
 export function tokenCookies(pair:Pair|null){
   const cookie=(name:string,value:string,seconds:number)=>`${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
-  return [cookie(COOKIE,pair?.access||'',pair?ACCESS_SECONDS:0),cookie(REFRESH_COOKIE,pair?.refresh||'',pair?.refreshSeconds||0)];
+  return [cookie(COOKIE,pair?.access||'',pair?.accessSeconds||0),cookie(REFRESH_COOKIE,pair?.refresh||'',pair?.refreshSeconds||0)];
 }
 export function sessionHeaders(pair:Pair|null){const headers=new Headers({'Cache-Control':'private, no-store'});for(const cookie of tokenCookies(pair))headers.append('Set-Cookie',cookie);return headers;}
 export async function createSession(db:D1Database,version:number,secret:string|undefined,memberId:string|null=null,memberVersion=1):Promise<Pair>{
@@ -29,8 +42,9 @@ export async function createSession(db:D1Database,version:number,secret:string|u
     db.prepare('INSERT INTO site_refresh_sessions(id,token_hash,version,expires_at,member_id,member_version) SELECT ?,?,?,?,?,? FROM site_account a WHERE a.id=1 AND a.version=? AND (? IS NULL OR EXISTS(SELECT 1 FROM site_members m WHERE m.id=? AND m.owner=a.owner AND m.active=1 AND m.version=?))').bind(id,rh,version,now+REFRESH_SECONDS*1000,memberId,memberVersion,version,memberId,memberId,memberVersion),
     db.prepare('INSERT INTO site_sessions(token_hash,version,expires_at,family_id,member_id,member_version) SELECT ?,version,?,id,member_id,member_version FROM site_refresh_sessions WHERE id=?').bind(ah,now+ACCESS_SECONDS*1000,id),
   ]);
-  if(!await db.prepare('SELECT id FROM site_refresh_sessions WHERE id=?').bind(id).first())throw Error('Account changed while signing in');
-  return {access,refresh,refreshSeconds:REFRESH_SECONDS};
+  const pair=await signedPair(db,secret,access,refresh,now+REFRESH_SECONDS*1000,now);
+  if(!pair)throw Error('Account changed while signing in');
+  return pair;
 }
 export async function refreshSession(db:D1Database,cookies:string,secret:string|undefined):Promise<Pair|null>{
   const token=cookieValue(cookies,REFRESH_COOKIE),id=familyId(token);if(!id)return null;
@@ -50,12 +64,11 @@ export async function refreshSession(db:D1Database,cookies:string,secret:string|
     db.prepare('DELETE FROM site_refresh_sessions WHERE expires_at<=?').bind(now),
   ];
   if(rotate)statements.push(db.prepare(`UPDATE site_refresh_sessions SET token_hash=?,previous_hash=?,previous_until=?,expires_at=? WHERE id=? AND token_hash=? AND expires_at>? AND ${memberSessionValid('site_refresh_sessions')} AND EXISTS(SELECT 1 FROM site_account WHERE id=1 AND version=site_refresh_sessions.version)`).bind(nextHash,rh,now+OVERLAP_MS,now+REFRESH_SECONDS*1000,id,rh,now));
-  statements.push(db.prepare(`INSERT INTO site_sessions(token_hash,version,expires_at,family_id,member_id,member_version) SELECT ?,r.version,?,r.id,r.member_id,r.member_version FROM site_refresh_sessions r JOIN site_account a ON a.id=1 AND a.version=r.version WHERE r.id=? AND r.token_hash=? AND r.expires_at>? AND ${memberSessionValid('r')} ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at`).bind(ah,now+ACCESS_SECONDS*1000,id,nextHash,now));
+  statements.push(db.prepare(`INSERT INTO site_sessions(token_hash,version,expires_at,family_id,member_id,member_version) SELECT ?,r.version,r.expires_at-?,r.id,r.member_id,r.member_version FROM site_refresh_sessions r JOIN site_account a ON a.id=1 AND a.version=r.version WHERE r.id=? AND r.token_hash=? AND r.expires_at>? AND ${memberSessionValid('r')} ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at`).bind(ah,(REFRESH_SECONDS-ACCESS_SECONDS)*1000,id,nextHash,now));
   const results=await db.batch(statements);
   if(!results.at(-1)?.meta.changes)return null; // Deleted/reset family must never be resurrected.
   const active=await db.prepare(`SELECT r.expires_at FROM site_refresh_sessions r JOIN site_account a ON a.id=1 AND a.version=r.version WHERE r.id=? AND r.token_hash=? AND r.expires_at>? AND ${memberSessionValid('r')}`).bind(id,nextHash,now).first<{expires_at:number}>();
-  if(!active)return null;
-  return {access,refresh,refreshSeconds:Math.max(1,Math.floor((active.expires_at-now)/1000))};
+  return active?signedPair(db,secret,access,refresh,active.expires_at,now):null;
 }
 export async function upgradeLegacySession(db:D1Database,cookies:string,secret:string|undefined):Promise<Pair|null>{
   const token=cookieValue(cookies,COOKIE);if(!/^[a-f0-9]{64}$/.test(token))return null;
@@ -72,10 +85,12 @@ export async function upgradeLegacySession(db:D1Database,cookies:string,secret:s
   ]);
   if(!results[1].meta.changes)return null;
   const active=await db.prepare('SELECT expires_at FROM site_refresh_sessions WHERE id=? AND token_hash=?').bind(id,rh).first<{expires_at:number}>();
-  return active?{access,refresh,refreshSeconds:Math.max(1,Math.floor((active.expires_at-now)/1000))}:null;
+  return active?signedPair(db,secret,access,refresh,active.expires_at,now):null;
 }
-export async function revokeTokens(db:D1Database,cookies:string){
-  const access=cookieValue(cookies,COOKIE),refresh=cookieValue(cookies,REFRESH_COOKIE),ah=await digest(access),rh=await digest(refresh);
+export async function revokeTokens(db:D1Database,cookies:string,secret:string|undefined){
+  const access=cookieValue(cookies,COOKIE),refresh=cookieValue(cookies,REFRESH_COOKIE);
+  const proof=(await verifyAccess(secret,access))?.proof??access;
+  const ah=await digest(proof),rh=await digest(refresh);
   await db.batch([
     // Either proof is sufficient, including an expired access token or the
     // preceding refresh token from an in-flight request racing this logout.

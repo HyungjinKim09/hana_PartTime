@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {testRuntime} from './test-runtime.mjs';
+import {testRuntime,expiredAccess} from './test-runtime.mjs';
 
 // Observe actual D1 prepares at the worker boundary, including framework routes.
 // withEnv ensures both env.DB and cloudflare:workers' imported env see the same
@@ -15,23 +14,30 @@ const json={'content-type':'application/json'};
 try{
  const login=await t.request('/api/session',{method:'POST',headers:json,body:JSON.stringify({username:'synthetic',password:'synthetic-password-12345'})});assert.equal(login.status,200);
  const cookie=jar(login),headers={cookie,'x-hana-identity':t.owner};
- const ordinary=await t.request('/api/library',{headers});assert.equal(ordinary.status,200);assert.equal(ordinary.headers.get('x-synthetic-session-checks'),'1','refresh preflight, identity fence and route share a verified lookup');
+ const ordinary=await t.request('/api/library',{headers});assert.equal(ordinary.status,200);assert.equal(ordinary.headers.get('x-synthetic-session-checks'),'0','ordinary reads verify the signed cookie without D1');
  const access=cookie.match(/__Host-fieldnote_session=([^;]+)/)[1];
- await t.db.prepare('UPDATE site_sessions SET expires_at=0 WHERE token_hash=?').bind(createHash('sha256').update(access).digest('hex')).run();
- const renewed=await t.request('/api/library',{headers});assert.equal(renewed.status,200);assert.equal(renewed.headers.get('x-synthetic-session-checks'),'2','the new access token is verified independently of the expired proof');
- const current=jar(renewed);
- const identity=await t.request('/api/identity',{headers:{cookie:current,'x-hana-identity':t.owner}});assert.equal(identity.status,200);assert.equal(identity.headers.get('x-synthetic-session-checks'),'1');
- const renewedAccess=current.match(/__Host-fieldnote_session=([^;]+)/)[1];
- const family=current.match(/__Host-hana_refresh=([^.;]+)/)[1];
- await t.db.prepare('UPDATE site_refresh_sessions SET previous_until=? WHERE id=?').bind(Date.now()+600000,family).run();
- await t.db.prepare('UPDATE site_sessions SET expires_at=0 WHERE token_hash=?').bind(createHash('sha256').update(renewedAccess).digest('hex')).run();
- const sameToken=await t.request('/api/library',{headers:{cookie:current,'x-hana-identity':t.owner}});
- assert.equal(sameToken.status,200,'refresh overlap may renew the same access token: discard its earlier expired result');
- assert.equal(jar(sameToken).match(/__Host-fieldnote_session=([^;]+)/)[1],renewedAccess,'exercise renewal of the same proof, not token rotation');
- assert.equal(sameToken.headers.get('x-synthetic-session-checks'),'2');
+ const privileged=await t.request('/api/members',{headers});
+ assert.equal(privileged.status,200);assert.equal(privileged.headers.get('x-synthetic-session-checks'),'1');
+ const expiredCookie=cookie.replace(access,expiredAccess(access,t.adminKey));
+ const renewed=await t.request('/api/library',{headers:{...headers,cookie:expiredCookie}});
+ assert.equal(renewed.status,200);
+ const current=jar(renewed);assert.ok(current.includes('__Host-hana_refresh='));
+ const identity=await t.request('/api/identity',{headers:{cookie:current,'x-hana-identity':t.owner}});
+ assert.equal(identity.status,200);assert.equal(identity.headers.get('x-synthetic-session-checks'),'0');
+ const signed=current.match(/__Host-fieldnote_session=([^;]+)/)[1];
+ const parts=signed.split('.');
+ const payload=JSON.parse(Buffer.from(parts[1],'base64url'));
+ parts[1]=Buffer.from(JSON.stringify({...payload,user:{...payload.user,owner:'forged-owner'}})).toString('base64url');
+ const tampered=await t.request('/api/library',{headers:{cookie:'__Host-fieldnote_session='+parts.join('.')}});
+ assert.equal(tampered.status,401);assert.equal(tampered.headers.get('x-synthetic-session-checks'),'0');
  const wrong=await t.request('/api/library',{headers:{cookie:current,'x-hana-identity':'forged-owner'}});assert.equal(wrong.status,409);
- assert.equal((await t.mf.dispatchFetch(t.origin+'/api/library',{headers:{'x-hana-identity':t.owner,'x-hana-user':t.owner}})).status,401,'client headers cannot create authentication');
- assert.equal((await t.request('/api/session',{method:'DELETE',headers:{cookie:current}})).status,200);
- assert.equal((await t.request('/api/library',{headers:{cookie:current}})).status,401,'a new request revalidates logout');
- console.log('PASS: actual worker preflight/fence/API verification once per request, independent refreshed-token validation, forged headers and logout revocation');
+ assert.equal((await t.mf.dispatchFetch(t.origin+'/api/library',{headers:{'x-hana-identity':t.owner,'x-hana-user':t.owner}})).status,401);
+ // Exercise access-only logout, including revocation of its refresh family.
+ assert.equal((await t.request('/api/session',{method:'DELETE',headers:{cookie:'__Host-fieldnote_session='+signed}})).status,200);
+ assert.equal((await t.request('/api/session/refresh',{method:'POST',headers:{cookie:current}})).status,401);
+ assert.equal((await t.request('/api/members',{headers:{cookie:current}})).status,401);
+ assert.equal((await t.request('/api/library',{method:'DELETE',headers:{cookie:current}})).status,401);
+ assert.equal((await t.request('/api/library',{headers:{cookie:current}})).status,200,'signed reads remain valid until access expiry');
+ assert.equal((await t.request('/api/library',{headers:{cookie:current.replace(signed,expiredAccess(signed,t.adminKey))}})).status,401);
+ console.log('PASS: signed reads bypass D1 authentication, privileged reads and writes enforce revocation, and expiry and tampering are rejected');
 }finally{await t.close();}

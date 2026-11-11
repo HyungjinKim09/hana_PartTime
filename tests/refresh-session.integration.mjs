@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {testRuntime,png} from './test-runtime.mjs';
+import {testRuntime,png,expiredAccess} from './test-runtime.mjs';
 
 // Undici (Miniflare's HTTP test transport) overwrites Sec-Fetch-Mode with cors.
 // A test-only ingress supplies the exact metadata a browser document navigation
@@ -21,7 +21,7 @@ const header=jar=>Object.entries(jar).map(([k,v])=>k+'='+v).join('; ');
 const call=(path,jar={},options={})=>t.request(path,{...options,headers:{cookie:header(jar),...options.headers}});
 let loginNumber=0;
 const login=async()=>{const r=await call('/api/session',{}, {method:'POST',headers:{'content-type':'application/json','cf-connecting-ip':'192.0.2.'+(++loginNumber)},body:JSON.stringify({username:'synthetic',password:'synthetic-password-12345'})});assert.equal(r.status,200);return r;};
-const expire=async jar=>t.db.prepare('UPDATE site_sessions SET expires_at=0 WHERE token_hash=?').bind(hash(jar[accessName])).run();
+const expire=jar=>{jar[accessName]=expiredAccess(jar[accessName],t.adminKey);};
 const refresh=jar=>call('/api/session/refresh',jar,{method:'POST'});
 try{
  const first=await login(),initial=cookies(first);
@@ -69,10 +69,10 @@ try{
  // A refresh racing logout must not recreate the deleted family, whichever operation wins.
  const racing=cookies(await login());await expire(racing);
  const [renewed,ended]=await Promise.all([refresh(racing),call('/api/session',racing,{method:'DELETE'})]);assert.equal(ended.status,200);
- if(renewed.status===200)assert.equal((await call('/api/library',cookies(renewed))).status,401);
+ if(renewed.status===200)assert.equal((await call('/api/members',cookies(renewed))).status,401);
  assert.equal((await refresh(racing)).status,401);
  const inactive=cookies(await login());await t.db.prepare('UPDATE site_refresh_sessions SET expires_at=0 WHERE id=?').bind(inactive[refreshName].split('.')[0]).run();
- assert.equal((await call('/api/library',inactive)).status,401,'Idle expiry invalidates the access token too');
+ assert.equal((await call('/api/members',inactive)).status,401,'Idle expiry prevents privileged reads');
  // Existing valid seven-day sessions upgrade without requiring another login.
  const legacy='a'.repeat(64),version=(await t.db.prepare('SELECT version FROM site_account WHERE id=1').first()).version;
  await t.db.prepare('INSERT INTO site_sessions(token_hash,version,expires_at) VALUES(?,?,?)').bind(hash(legacy),version,Date.now()+7*86400000).run();
@@ -84,6 +84,6 @@ try{
  assert.equal((await call('/api/session',legacyJar,{method:'DELETE'})).status,200);
  assert.equal((await refresh(cookies(upgraded[0]))).status,401,'Old proof logout revokes upgraded session too');
  const reset=await call('/api/account',{}, {method:'POST',headers:{'content-type':'application/json','x-admin-key':t.adminKey},body:JSON.stringify({username:'synthetic',password:'replacement-password-12345'})});assert.equal(reset.status,200);
- assert.equal((await refresh(second)).status,401);assert.equal((await call('/api/library',second)).status,401);
+ assert.equal((await refresh(second)).status,401);assert.equal((await call('/api/members',second)).status,401);
  console.log('PASS: secure 15m/90d cookies, hash-only persistence, sliding expiry, automatic SSR/upload/ZIP refresh, concurrent tabs, replay window, logout/race, device isolation, inactivity, legacy upgrade and reset revocation');
 }finally{await t.close();}
