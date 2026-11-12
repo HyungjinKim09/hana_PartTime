@@ -37,8 +37,8 @@ try{
  const upload=async lots=>{
   const form=new FormData();
   form.set('photo',new Blob([png],{type:'image/png'}),'일정표.png');
-  form.set('schedule',JSON.stringify({region,date:today,folders:lots.map((lot,i)=>({
-   lot:'테스트동 '+lot,unit:i===6?'101호':'',time:'',name:'',phones:[],address:'',notes:'',group:1,
+  form.set('schedule',JSON.stringify({region,date:today,folders:lots.map(lot=>({
+   lot:'테스트동 '+lot,unit:[109,106,104,102].includes(lot)?'101호':'',time:'',name:'',phones:[],address:'',notes:'',group:1,
   }))}));
   const encoded=new Response(form);
   const r=await t.request('/api/schedules',{method:'POST',headers:{'content-type':encoded.headers.get('content-type')},body:await encoded.arrayBuffer()});
@@ -52,13 +52,14 @@ try{
   assert.equal(r.status,200);
   const text=(await r.json()).text.split(region+' 현장조사 일일보고')[1];
   assert.ok(text);
+  assert.match(text,/일반건물[\s\S]*구분건물/);
   return [...text.matchAll(/^(\d+)\.테스트동 /gm)].map(match=>Number(match[1]));
  };
- assert.deepEqual(await reportNumbers(a.cookie),[1,2,3,4,5]);
- assert.deepEqual(await reportNumbers(b.cookie),[6,7,8,9,10]);
+ assert.deepEqual(await reportNumbers(a.cookie),[1,2,3,1,2]);
+ assert.deepEqual(await reportNumbers(b.cookie),[4,5,6,3,4]);
  await upload([99,98]);
  const later=await t.db.prepare('SELECT id FROM survey_folders WHERE owner=? AND region=? AND lot=?').bind(t.owner,region,'테스트동 98').first();
  await save(b.cookie,later.id,1,'조사 12');
- assert.deepEqual(await reportNumbers(b.cookie),[6,7,8,9,10,12]);
+ assert.deepEqual(await reportNumbers(b.cookie),[4,5,6,8,3,4]);
  console.log('PASS: participated folders, bounded search/pagination, today KST report, personal snapshots after coworker edits, multi-region/copy format, auth and deleted-folder cleanup');
 }finally{await t.close();}

@@ -25,24 +25,12 @@ export function dailyReport(region:string,date:string,folders:Folder[],scheduleN
     const detail=f.buildingDetails?.trim();
     lines.push(`${heading} - ${surveyStatus(f.surveyStatus)}/${detail?detail+'/':''}${f.remarks?.trim()||'특이사항 없음'}`);
   }
-  if(scheduleNumbers){
-    let previousCategory:string|undefined;
-    scheduled.forEach((f,i)=>{
-      const category=buildingCategory(f);
-      if(groups.length>1&&category!==previousCategory){
-        if(previousCategory)lines.push('');
-        lines.push(category);
-        previousCategory=category;
-      }
-      writeRow(f,scheduleNumbers.get(f.id)??i+1,category);
-    });
-    if(scheduled.length)lines.push('');
-  }else{
-    for(const {category,rows} of groups){
-      if(groups.length>1)lines.push(category);
-      rows.forEach((f,i)=>writeRow(f,i+1,category));
-      lines.push('');
-    }
+  for(const {category,rows} of groups){
+    if(groups.length>1)lines.push(category);
+    const ordered=scheduleNumbers?rows.toSorted((a,b)=>
+      (scheduleNumbers.get(a.id)??Infinity)-(scheduleNumbers.get(b.id)??Infinity)):rows;
+    ordered.forEach((f,i)=>writeRow(f,scheduleNumbers?.get(f.id)??i+1,category));
+    lines.push('');
   }
   const additional=items.filter(f=>f.manualAdded);
   if(additional.length){
