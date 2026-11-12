@@ -15,6 +15,22 @@ try{
  const report=await(await as(a.cookie,'/api/my-work?mode=report')).json();assert.equal(report.date,today);assert.equal(report.count,2);assert.equal(report.regions,2);assert.match(report.text,/A가 직접 작성한 결과/);assert.match(report.text,/A 추가 구역/);assert.match(report.text,/사직동 159-001/);assert.match(report.text,/추가일정/);assert.ok(!report.text.includes('B의 다른')&&!report.text.includes('B 전용')&&!report.text.includes('다른 조사 날짜')&&!report.text.includes('photo-only'));
  const bReport=await(await as(b.cookie,'/api/my-work?mode=report')).json();assert.match(bReport.text,/B의 다른 조사 결과/);assert.ok(!bReport.text.includes('A가 직접'));
  assert.equal((await t.mf.dispatchFetch(t.origin+'/api/my-work?mode=report')).status,401);assert.equal((await as(a.cookie,'/api/my-work?actor='+b.id)).status,400);assert.equal((await as(a.cookie,'/api/my-work?limit=101')).status,400);
+ const historical='/api/my-work?'+new URLSearchParams({mode:'report',region:'테스트',date:'2026-09-23'});
+ await save(b.cookie,'other-day',2,'같은 과거 일정의 B 기록');
+ const oldA=await as(a.cookie,historical);
+ assert.equal(oldA.status,200,'a selected date folder can load its personal report');
+ const oldReport=await oldA.json();
+ assert.equal(oldReport.date,'2026-09-23');assert.equal(oldReport.count,1);
+ assert.match(oldReport.text,/다른 조사 날짜/);assert.doesNotMatch(oldReport.text,/같은 과거 일정의 B 기록|A가 직접 작성한 결과/);
+ const oldB=await(await as(b.cookie,historical)).json();
+ assert.match(oldB.text,/같은 과거 일정의 B 기록/);assert.doesNotMatch(oldB.text,/다른 조사 날짜/);
+ const scoped=await(await as(a.cookie,'/api/my-work?'+new URLSearchParams({mode:'report',region:'내 보고 구역',date:today}))).json();
+ assert.equal(scoped.count,1);assert.match(scoped.text,/A가 직접 작성한 결과/);assert.doesNotMatch(scoped.text,/A 추가 구역/);
+ const empty=await(await as(a.cookie,historical.replace('2026-09-23','2026-09-24'))).json();
+ assert.equal(empty.count,0);assert.equal(empty.text,'');
+ assert.equal((await as(a.cookie,historical.replace('2026-09-23','2026-02-30'))).status,400);
+ assert.equal((await as(a.cookie,'/api/my-work?mode=report&date=2026-09-23')).status,400);
+ assert.equal((await t.mf.dispatchFetch(t.origin+historical)).status,401);
  assert.equal((await as(a.cookie,'/api/folders?id=both',{method:'DELETE'})).status,200);const after=await(await as(a.cookie,'/api/my-work?mode=report')).json();assert.equal(after.count,1);assert.equal((await t.db.prepare("SELECT COUNT(*) n FROM personal_survey_records WHERE folder_id='both'").first()).n,0);
  // Use the real schedule import path and two workers, including mixed building types.
  const region='업로드 순번 검증';

@@ -1,8 +1,9 @@
+import {recordCompletedArchive} from './completion';
 import {archiveCompletionReceipt} from '@/lib/archive-completion';
 import {addressParts,matchingAddress,withinAddress} from '@/lib/address-folders';
 import {listFolders} from '@/lib/folders';
 import {exportFolderLabel} from '@/lib/daily-report';
-import {ApiError,failure,identity,storage,json,requireSameOrigin} from '@/lib/storage';
+import {ApiError,failure,identityUser,storage,json,requireSameOrigin} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
 import {archiveParts} from '@/lib/archive-parts';
 import {sha256} from '@/lib/backup-format';
@@ -11,7 +12,9 @@ export const dynamic='force-dynamic';
 export function GET(){return json({error:'다운로드 버튼에서 다시 시작해 주세요.'},405);}
 export async function POST(request:Request){try{
   requireSameOrigin(request);
-  const owner=await identity(request);const {db,bucket}=storage();const params=new URL(request.url).searchParams;
+  const user=await identityUser(request),{db,bucket}=storage(),params=new URL(request.url).searchParams;
+  if(params.get('completed')==='1')return await recordCompletedArchive(request,db,user);
+  const owner=user.owner;
   const folder=params.get('folder'),region=params.get('region'),date=params.get('date');
   const photosOnly=params.get('photosOnly')==='1';
   const allFolders=await listFolders(db,owner);

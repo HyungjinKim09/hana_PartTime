@@ -3,16 +3,26 @@ import {dailyReport} from '@/lib/daily-report';
 import {folderView,type FolderRow} from '@/lib/folders';
 export async function GET(request:Request){try{
  const user=await identityUser(request),{db}=storage(),params=new URL(request.url).searchParams,actor=user.memberId||'admin';
- if([...params.keys()].some(key=>!['mode','q','limit','cursor'].includes(key)))throw new ApiError('내 작업 조회 조건을 확인해 주세요.');
  const mode=params.get('mode')||'folders';
+ const allowed=mode==='report'?['mode','q','limit','cursor','region','date']:['mode','q','limit','cursor'];
+ if([...params.keys()].some(key=>!allowed.includes(key)))throw new ApiError('내 작업 조회 조건을 확인해 주세요.');
  if(mode==='report'){
-  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const region=params.get('region'),selectedDate=params.get('date');
+  if(region!==null||selectedDate!==null){
+   const day=new Date((selectedDate||'')+'T00:00:00Z');
+   if(!region?.trim()||region.length>500||!selectedDate||!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)||
+     Number.isNaN(day.getTime())||day.toISOString().slice(0,10)!==selectedDate){
+    throw new ApiError('일일보고를 복사할 지역과 날짜를 확인해 주세요.');
+   }
+  }
+  const date=selectedDate??new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   // Number the full schedule in each relevant region before selecting the actor's rows.
   const rows=await db.prepare(`WITH own AS MATERIALIZED (
     SELECT f.*,r.remarks AS personal_remarks,r.building_details AS personal_details,
       r.survey_status AS personal_status,r.restored AS personal_restored
     FROM personal_survey_records r JOIN survey_folders f ON f.owner=r.owner AND f.id=r.folder_id
-    WHERE r.owner=?1 AND r.actor_id=?2 AND f.survey_date=?3 AND f.deleting=0 LIMIT 2001
+    WHERE r.owner=?1 AND r.actor_id=?2 AND f.survey_date=?3 AND f.deleting=0
+      ${region!==null?'AND f.region=?4':''} LIMIT 2001
   ), regions AS MATERIALIZED (SELECT DISTINCT region FROM own WHERE manual_added=0),
   numbered AS MATERIALIZED (
     SELECT f.id, ROW_NUMBER() OVER (
@@ -24,7 +34,7 @@ export async function GET(request:Request){try{
   )
   SELECT own.*,numbered.schedule_number FROM own LEFT JOIN numbered ON numbered.id=own.id
   ORDER BY own.region,numbered.schedule_number IS NULL,numbered.schedule_number,own.group_index,own.sort_index,own.id`)
-    .bind(user.owner,actor,date)
+    .bind(user.owner,actor,date,...(region!==null?[region]:[]))
     .all<FolderRow&{personal_remarks:string;personal_details:string;personal_status:string;personal_restored:number;schedule_number:number|null}>();
   if(rows.results.length>2000)throw new ApiError('보고할 일정이 너무 많습니다. 관리자에게 문의해 주세요.',413);
   const numbers=new Map(rows.results.flatMap(row=>row.schedule_number===null?[]:[[row.id,row.schedule_number] as const]));

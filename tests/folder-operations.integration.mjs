@@ -22,26 +22,29 @@ try{
  assert.equal((await t.request('/api/library?folder=empty&kind=drawing&filename=drawing.png',{method:'POST',body:png})).status,201);
  const exported=await t.request('/api/export?region=테스트&photosOnly=1&track=1',{method:'POST'});assert.equal(exported.status,200);const manifest=await exported.json();assert.match(manifest.downloadReceipt,/^[a-f0-9-]{36}$/);
  assert.equal((await(await t.request('/api/library?folder=photos-a')).json()).summary.downloaded,0,'export alone never marks completion');
- const confirmed=await send('/api/folder-downloads',{receipts:[manifest.downloadReceipt]});assert.equal(confirmed.status,200);assert.equal((await confirmed.json()).marked,3);
+ const record=(receipts,extra={})=>send('/api/export?completed=1',{receipts},'POST',extra);
+ const confirmed=await record(manifest.downloadReceipts);assert.equal(confirmed.status,200);assert.equal((await confirmed.json()).marked,3);
  detail=await(await t.request('/api/library?folder=photos-a')).json();assert.equal(detail.summary.downloaded,1);assert.equal(detail.folders[0].downloadedBy.id,'admin');
  assert.equal((await(await t.request('/api/library?folder=empty')).json()).summary.downloaded,0,'drawing and empty folders are never marked');
- assert.equal((await send('/api/folder-downloads',{receipts:[crypto.randomUUID()]})).status,410);
- assert.equal((await send('/api/folder-downloads',{receipts:[manifest.downloadReceipt]},'POST',{origin:'https://other.test'})).status,403);
- const version=detail.folders[0].downloadRevision;assert.equal((await send('/api/folder-downloads',{folder:'photos-a',revision:version},'DELETE',{cookie:worker})).status,200);
- assert.equal((await send('/api/folder-downloads',{folder:'photos-a',revision:version},'DELETE')).status,409);
+ const replay=await record(manifest.downloadReceipts,{cookie:worker});assert.equal(replay.status,200);assert.equal((await replay.json()).marked,0);
+ assert.equal((await(await t.request('/api/library?folder=photos-a')).json()).folders[0].downloadedBy.id,'admin','duplicate requests preserve the original attribution');
+ assert.equal((await record([crypto.randomUUID()])).status,410);
+ assert.equal((await record(manifest.downloadReceipts,{origin:'https://other.test'})).status,403);
+ assert.equal((await send('/api/folder-downloads',{receipts:manifest.downloadReceipts})).status,404);
+ assert.equal((await send('/api/folder-downloads',{folder:'photos-a'},'DELETE')).status,404);
  const current=await t.request('/api/export?folder=photos-a&track=1',{method:'POST'}),receipt=(await current.json()).downloadReceipt;
  assert.equal((await t.request('/api/library?folder=photos-a&filename=new.png',{method:'POST',body:png})).status,201);
- assert.equal((await send('/api/folder-downloads',{receipts:[receipt]})).status,409,'photos added after ZIP preparation cannot be marked');
+ const stale=await record([receipt]);assert.equal(stale.status,200);assert.equal((await stale.json()).marked,0,'photos added after ZIP preparation cannot be marked');
  const fresh=(await(await t.request('/api/export?folder=photos-a&track=1',{method:'POST'})).json()).downloadReceipt;
- assert.equal((await send('/api/folder-downloads',{receipts:[fresh]},'POST',{cookie:worker})).status,200);
+ assert.equal((await record([fresh],{cookie:worker})).status,200);
  detail=await(await t.request('/api/library?folder=photos-a')).json();assert.equal(detail.summary.downloaded,1);assert.equal(detail.folders[0].downloadedBy.id,a.id);
  assert.equal((await t.request('/api/library?folder=photos-a&filename=changed.png',{method:'POST',body:png})).status,201);detail=await(await t.request('/api/library?folder=photos-a')).json();assert.equal(detail.summary.downloaded,0);assert.ok(detail.folders[0].downloadedBy);
  await t.folder('split');const bucket=await t.mf.getR2Bucket('BUCKET');
  for(let n=0;n<2;n++){await bucket.put('split-'+n,png);await t.db.prepare("INSERT INTO photos(id,owner,folder,filename,object_key,content_type,size,created_at,kind) VALUES(?,?,'split',?,?,'image/png',157286400,?,'photo')").bind('split-'+n,t.owner,n+'.png','split-'+n,new Date().toISOString()).run();}
  const plan=await(await t.request('/api/export?folder=split&parts=1',{method:'POST'})).json(),receipts=[];assert.equal(plan.parts.length,2);
  for(const part of plan.parts){const data=await(await t.request('/api/export?'+new URLSearchParams({folder:'split',part:String(part.index),snapshot:plan.snapshot,track:'1'}),{method:'POST'})).json();receipts.push(data.downloadReceipt);}
- assert.equal((await send('/api/folder-downloads',{receipts:[receipts[0]]})).status,409,'one part cannot complete a split folder');assert.equal((await send('/api/folder-downloads',{receipts})).status,200);
- assert.equal((await t.mf.dispatchFetch(t.origin+'/api/folder-participants?folder=legacy-crew')).status,401);assert.equal((await t.mf.dispatchFetch(t.origin+'/api/folder-downloads',{method:'POST',headers:{origin:t.origin,...headers},body:JSON.stringify({receipts})})).status,401);
+ const partial=await record([receipts[0]]);assert.equal(partial.status,200);assert.equal((await partial.json()).marked,0,'one part cannot complete a split folder');const full=await record(receipts);assert.equal(full.status,200);assert.equal((await full.json()).marked,1);
+ assert.equal((await t.mf.dispatchFetch(t.origin+'/api/folder-participants?folder=legacy-crew')).status,401);assert.equal((await t.mf.dispatchFetch(t.origin+'/api/export?completed=1',{method:'POST',headers:{origin:t.origin,...headers},body:JSON.stringify({receipts})})).status,401);
  const events=await(await t.request('/api/activity')).json();assert.ok(events.entries.some(e=>e.action==='folder.participants'));assert.ok(events.entries.some(e=>e.action==='photos.download_confirmed'));
- console.log('PASS: admin manual investigators, actual-worker preservation, no forged reports, explicit shared ZIP completion, parts coverage, revisions, new photos, owner/origin/auth boundaries');
+ console.log('PASS: admin manual investigators, actual-worker preservation, no forged reports, automatic shared ZIP completion, parts coverage, revisions, new photos, owner/origin/auth boundaries');
 }finally{await t.close();}

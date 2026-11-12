@@ -27,3 +27,32 @@ test('cancelled download does not fetch another original',async()=>{
   const stream=createZipStream(exportEntries({entries:[{name:'photo.jpg',size:1,url:'/api/export/ticket'}]},async()=>{fetched=true;return new Response('a');},controller.signal));
   await assert.rejects(new Response(stream).arrayBuffer(),{name:'AbortError'});assert.equal(fetched,false);
 });
+
+test('records download completion only after the native ZIP file closes',async t=>{
+  const {downloadArchive}=await import('../lib/download-archive.ts');
+  let closed=false,completionRequests=0,truncated=false;
+  globalThis.window={showSaveFilePicker:async()=>({
+    createWritable:async()=>new WritableStream({
+      write(){},
+      close(){closed=true;},
+    }),
+  })};
+  t.after(()=>{delete globalThis.window;});
+  t.mock.method(globalThis,'fetch',async (path,options)=>{
+    if(path==='/api/export?completed=1'){
+      completionRequests++;
+      assert.equal(closed,true);
+      assert.deepEqual(JSON.parse(options.body).receipts,['previous-receipt','current-receipt']);
+      return Response.json({ids:['folder']});
+    }
+    if(path==='/api/export/ticket')return new Response(truncated?'x':'abc');
+    return Response.json({name:'example.zip',totalBytes:3,downloadReceipts:['current-receipt'],
+      entries:[{name:'photo.jpg',size:3,url:'/api/export/ticket'}]});
+  });
+  const start=()=>downloadArchive(new URLSearchParams(),new AbortController().signal,()=>{},'example',['previous-receipt']);
+  const result=await start();
+  assert.deepEqual(result.ids,['folder']);assert.equal(result.statusError,'');assert.equal(completionRequests,1);
+  closed=false;truncated=true;
+  await assert.rejects(start());
+  assert.equal(closed,false);assert.equal(completionRequests,1);
+});
