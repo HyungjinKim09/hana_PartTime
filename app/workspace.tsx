@@ -18,8 +18,9 @@ import {savePending,deletePendingMany} from '@/lib/pending-uploads';
 import {prepareUploadBatches} from '@/lib/upload-preparation';
 import {uploadId} from '@/lib/upload-id';
 import {lazy,Suspense,useCallback,useEffect,useRef,useState} from 'react';
-import {Pencil,Plus,Archive,ArrowLeft,ArrowDownToLine,Camera,Check,ChevronRight,Clock,CloudUpload,Folder as FolderIcon,FolderOpen,Image as ImageIcon,LockKeyhole,MapPin,Phone,RefreshCw,TriangleAlert,Trash2,UserRound,MoreHorizontal,ChevronDown,FileText} from 'lucide-react';
+import {Pencil,Plus,Archive,ArrowLeft,ArrowDownToLine,Check,ChevronRight,Clock,CloudUpload,Folder as FolderIcon,FolderOpen,Image as ImageIcon,LogOut,MapPin,Phone,RefreshCw,Settings,TriangleAlert,Trash2,UserRound,MoreHorizontal,ChevronDown,FileText} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
+import {DropdownMenu,DropdownMenuContent,DropdownMenuItem,DropdownMenuTrigger} from '@/components/ui/dropdown-menu';
 import {AlertDialog,AlertDialogContent,AlertDialogHeader,AlertDialogTitle,AlertDialogDescription,AlertDialogFooter,AlertDialogCancel,AlertDialogAction} from '@/components/ui/alert-dialog';
 import {Progress} from '@/components/ui/progress';
 import {Toaster} from '@/components/ui/sonner';
@@ -53,6 +54,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
   const [editingSchedule,setEditingSchedule]=useState<Folder|null>(null);
   const scheduleLocation=useRef('');
   const [remarksDirty,setRemarksDirty]=useState(false);
+  const [loggingOut,setLoggingOut]=useState(false);
   const [region,setRegion]=useState<string|null>(null),[date,setDate]=useState<string|null>(null),[importing,setImporting]=useState(false);
   const [searchQuery,setSearchQuery]=useState('');
   const [folderPane,setFolderPane]=useState<'photos'|'record'|'map'>('photos');
@@ -69,7 +71,8 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
   const [preview,setPreview]=useState<Photo|null>(null),[deleting,setDeleting]=useState<Photo|null>(null),[deleteBusy,setDeleteBusy]=useState(false);
   const [exportScope,setExportScope]=useState<string|null|undefined>(undefined),[dragging,setDragging]=useState(false);
   const input=useRef<HTMLInputElement>(null),sequence=useRef(0),uploadLock=useRef(false),activeUpload=useRef<AbortController|null>(null);
-  const [navigationReady,setNavigationReady]=useState(false),[navigation,setNavigation]=useState<LibraryNavigation>({regions:[],dates:[]});
+  const [navigationReady,setNavigationReady]=useState(false);
+  const [navigation,setNavigation]=useState<LibraryNavigation&{datesRegion:string|null}>({regions:[],dates:[],datesRegion:null});
   const cache=useRef(new LibraryCache());
   const [library,setLibrary]=useState<LibraryPage|null>(null),[folderPageBusy,setFolderPageBusy]=useState(false),[searchTerm,setSearchTerm]=useState('');
   const pathKey=JSON.stringify(addressPath);
@@ -81,11 +84,11 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
   type UsageInfo={usage:BudgetUsage;forecast?:{dailyBytes:number;daysRemaining:number|null}};
   const [nextCursor,setNextCursor]=useState<string|null>(null),[pageBusy,setPageBusy]=useState(false),[forecast,setForecast]=useState<UsageInfo['forecast']>();
   const lastRefresh=useRef(0),auxiliarySequence=useRef(0);
-  const handleFailure=useCallback((e:unknown)=>{if(e instanceof LibraryRequestError&&e.status===401){sequence.current++;auxiliarySequence.current++;cache.current.clear();setLibrary(null);setPhotos([]);setFolders([]);setUsage(null);setNavigation({regions:[],dates:[]});setLoading(false);}if(!(e instanceof Error&&e.name==='AbortError'))setError(e instanceof Error?e.message:'보관함 조회 실패');},[]);
+  const handleFailure=useCallback((e:unknown)=>{if(e instanceof LibraryRequestError&&e.status===401){sequence.current++;auxiliarySequence.current++;cache.current.clear();setLibrary(null);setPhotos([]);setFolders([]);setUsage(null);setNavigation({regions:[],dates:[],datesRegion:null});setLoading(false);}if(!(e instanceof Error&&e.name==='AbortError'))setError(e instanceof Error?e.message:'보관함 조회 실패');},[]);
   useEffect(()=>{const store=cache.current;return()=>{store.clear();activeUpload.current?.abort();};},[]);
   const scopeUrl=useCallback((folder:string|null)=>{const params=new URLSearchParams({view,limit:'60'});if(folder){params.set('folder',folder);params.set('kind',mediaKind);if(view==='address'&&region){params.set('region',region);if(pathKey!=='[]')params.set('path',pathKey);}}else{if(region)params.set('region',region);if(date&&view==='date')params.set('date',date);if(view==='address'&&pathKey!=='[]')params.set('path',pathKey);if(searchTerm)params.set('q',searchTerm);}return '/api/library?'+params;},[view,mediaKind,region,date,pathKey,searchTerm]);
   const applyPage=useCallback((data:LibraryPage)=>{setLibrary(data);setFolders(data.folders);setPhotos(data.photos);setNextCursor(data.nextCursor);setError('');if(data.canonicalAddressPath){setAddressPath(data.canonicalAddressPath);const q=new URLSearchParams(window.location.hash.slice(1));q.set('path',JSON.stringify(data.canonicalAddressPath));window.history.replaceState(window.history.state,'',window.location.pathname+window.location.search+'#'+q);}},[]);
-  const auxiliary=useCallback(async()=>{const seq=++auxiliarySequence.current,nav='/api/library?'+new URLSearchParams({navigation:'1',...(region?{region}:{})});try{const [info,tree]=await Promise.all([cache.current.get<UsageInfo>('/api/library?usageOnly=1'),cache.current.get<LibraryNavigation>(nav)]);if(seq===auxiliarySequence.current){setUsage(info.usage);setForecast(info.forecast);setNavigation(tree);}}catch(e){if(seq===auxiliarySequence.current||e instanceof LibraryRequestError&&e.status===401)handleFailure(e);}},[region,handleFailure]);
+  const auxiliary=useCallback(async()=>{const seq=++auxiliarySequence.current,nav='/api/library?'+new URLSearchParams({navigation:'1',...(region?{region}:{})});try{const [info,tree]=await Promise.all([cache.current.get<UsageInfo>('/api/library?usageOnly=1'),cache.current.get<LibraryNavigation>(nav)]);if(seq===auxiliarySequence.current){setUsage(info.usage);setForecast(info.forecast);setNavigation({...tree,datesRegion:region});}}catch(e){if(seq===auxiliarySequence.current||e instanceof LibraryRequestError&&e.status===401)handleFailure(e);}},[region,handleFailure]);
   const refresh=useCallback(async(folder:string|null,quiet=false,reuse=false)=>{
     const seq=++sequence.current,url=scopeUrl(folder);
     if(!reuse)cache.current.invalidate(key=>{const params=new URL(key).searchParams;if(params.has('usageOnly')||params.has('navigation'))return true;if(params.has('folder'))return params.get('folder')===folder||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>f.id===folder);return !params.has('region')||params.get('region')===region&&(params.get('view')==='address'||!params.has('date')||params.get('date')===date);});
@@ -185,8 +188,14 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     if(uploading||folderDeleteBusy)return;if(remarksDirty){toast.info('비고를 저장한 뒤 이동해 주세요.');return;}
     if(cameraPending&&!window.confirm('아직 업로드하지 않은 촬영 사진을 버리고 이동할까요?'))return;
     if(mode==='address')d=null;else path=[];
-    const url=locationUrl(r,d,id,path,mode);if(url===window.location.pathname+window.location.search+window.location.hash)return;
-    const position={index:historyPosition.current.index+1,parents:[]};window.history.pushState({...window.history.state,hanaNavigation:position},'',url);historyPosition.current=position;
+    const url=locationUrl(r,d,id,path,mode);
+    const sameLocation=url===window.location.pathname+window.location.search+window.location.hash;
+    if(sameLocation&&!searchQuery&&!searchTerm)return;
+    if(!sameLocation){
+      const position={index:historyPosition.current.index+1,parents:[]};
+      window.history.pushState({...window.history.state,hanaNavigation:position},'',url);
+      historyPosition.current=position;
+    }
     setMediaKind('photo');setSearchQuery('');setSearchTerm('');setView(mode);setAddressPath(path);setRegion(r);setDate(d);setSelected(id);setPreview(null);setExportScope(undefined);window.scrollTo({top:0,behavior:'smooth'});
   }
   function parentLocation(){if(addressPath.length)location(region,date,null,addressPath.slice(0,-1));else if(selected)location(region,date);else if(date)location(region);else location(null);}
@@ -199,31 +208,100 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     }catch(e){toast.error(e instanceof Error?e.message:'삭제하지 못했습니다. 다시 시도해 주세요.');await refresh(selected,true);}finally{setFolderDeleteBusy(false);}
   }
 
+  const accountActionsBlocked=uploading||remarksDirty||cameraPending||folderDeleteBusy||loggingOut;
+  async function logout(){
+    if(accountActionsBlocked)return;
+    setLoggingOut(true);
+    try{
+      const response=await fetch('/api/session',{method:'DELETE'});
+      if(!response.ok)throw new Error();
+      announceAuthChange();
+      cache.current.clear();
+      window.location.assign('/');
+    }catch{
+      setLoggingOut(false);
+      toast.error('로그아웃하지 못했습니다. 다시 시도해 주세요.');
+    }
+  }
 
   return <div className="app-shell">
     <Toaster richColors position="top-center" theme="light"/>
-    <header className="app-header"><Link prefetch={false} href="/" className="brand" aria-label="HANA 홈"><span className="brand-mark"><FolderOpen size={23}/></span><span>HANA<span className="brand-caption">현장 기록</span></span></Link><div className="private-label"><UserRound size={14}/><span className="current-actor" title={userName}>{userName}</span></div></header>
+    <header className="app-header">
+      <Link prefetch={false} href={view==='address'?'/#view=address':'/'} className="brand" aria-label="HANA 홈" onNavigate={event=>{
+        event.preventDefault();
+        location(null);
+      }}>
+        <span className="brand-mark"><FolderOpen size={21}/></span><span>HANA</span>
+      </Link>
+      <DropdownMenu>
+        <DropdownMenuTrigger type="button" className="account-menu-trigger" aria-label={`${userName} 계정 메뉴`}>
+          <UserRound size={16} aria-hidden="true"/><span title={userName}>{userName}</span><ChevronDown size={14} aria-hidden="true"/>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={6} className="account-menu">
+          {isAdmin&&<DropdownMenuItem asChild disabled={accountActionsBlocked}>
+            <a href="/account/setup" onClick={event=>{if(accountActionsBlocked)event.preventDefault();}}>
+              <Settings aria-hidden="true"/>관리자 계정 설정
+            </a>
+          </DropdownMenuItem>}
+          <DropdownMenuItem disabled={accountActionsBlocked} onSelect={()=>void logout()}>
+            <LogOut aria-hidden="true"/>{loggingOut?'로그아웃 중…':'로그아웃'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </header>
     <div className="workspace-layout">
-      <aside className="project-panel"><div className="panel-label">조사 프로젝트</div><button className="date-nav" disabled={uploading} onClick={()=>location(null)}><FolderOpen size={19}/><span>전체 지역</span><span className="nav-count">{regions.length}</span></button><div className="folder-index">{regions.map(r=><div key={r}><button className={region===r?'index-item active':'index-item'} disabled={uploading} onClick={()=>location(r)}><FolderIcon size={16}/><span>{r}</span></button>{view==='date'&&region===r&&navigation.dates.map(item=><button key={item.date} className={date===item.date?'index-item active date-index':'index-item date-index'} disabled={uploading} onClick={()=>location(r,item.date)}><span>{item.date}</span><span>{item.schedules}</span></button>)}</div>)}</div><button className="secondary-button" disabled={uploading||remarksDirty||cameraPending} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={17}/>일정표 사진 등록</button><div className="sidebar-bottom"><LockKeyhole size={16}/><div><strong>비공개 원본 보관</strong><p>개인 계정으로 PC와 휴대폰에서<br/>함께 사진을 관리합니다.</p></div></div></aside>
+      <aside className="project-panel">
+        <nav aria-label="조사 구역">
+          <h2 className="panel-label">조사 구역</h2>
+          <button className="date-nav" aria-current={!region?'page':undefined} disabled={uploading} onClick={()=>location(null)}>
+            <FolderOpen size={17}/><span>전체 지역</span><span className="nav-count">{regions.length}</span>
+          </button>
+          <ul className="folder-index">{regions.map(r=>{
+            const datesOpen=view==='date'&&region===r&&navigation.datesRegion===r&&navigation.dates.length>0;
+            return <li key={r}>
+              <button className={region===r?'index-item active':'index-item'} aria-current={region===r&&!date?'page':undefined} aria-expanded={view==='date'?datesOpen:undefined} disabled={uploading} onClick={()=>location(r)}>
+                <FolderIcon size={16}/><span>{r}</span>
+              </button>
+              {datesOpen&&<div className="date-tree-reveal"><div className="date-tree-clip">
+                <ul className="date-tree">{navigation.dates.map(item=><li key={item.date}>
+                  <button className={date===item.date?'index-item active date-index':'index-item date-index'} aria-current={date===item.date?'page':undefined} disabled={uploading} onClick={()=>location(r,item.date)}>
+                    <span>{item.date}</span><span>{item.schedules}</span>
+                  </button>
+                </li>)}</ul>
+              </div></div>}
+            </li>;
+          })}</ul>
+        </nav>
+        <button className="secondary-button sidebar-import" disabled={uploading||remarksDirty||cameraPending} onClick={()=>{setManualImport(false);setImporting(true);}}>
+          <CloudUpload size={17}/>일정표 사진 등록
+        </button>
+      </aside>
       <main className="main-workspace">
-        {region&&<button className="back-button" disabled={uploading||folderDeleteBusy} onClick={parentLocation}><ArrowLeft size={16}/>상위 폴더로</button>}
-        <nav aria-label="현재 위치" className="breadcrumb"><button disabled={uploading} onClick={()=>location(null)}>전체 지역</button>{region&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region)}>{region}</button></>}{date&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date)}>{date}</button></>}{pathLabels.map((label,i)=><span key={i} style={{display:'contents'}}><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date,i===addressPath.length-1?selected:null,addressPath.slice(0,i+1))}>{label}</button></span>)}{active&&!addressPath.length&&<><ChevronRight size={14}/><span>{folderLabel(active)}</span></>}</nav>
-        <section className="page-heading"><div className="page-title"><div className="eyebrow">{active?[region,active.date].filter(Boolean).join(' · '):region||'HANA WORKSPACE'}</div><h1>{active?pathLabels.at(-1)||folderLabel(active):pathLabels.at(-1)||(date?`${date} 현장조사`:region||'현장조사 보관함')}</h1><p>{active?active.address:date?'조사할 주소를 선택해 사진과 기록을 관리하세요.':'구역과 주소로 현장 기록을 빠르게 찾아보세요.'}</p></div><div className="heading-actions">{active&&<button className="secondary-button" disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy} onClick={()=>{scheduleLocation.current=window.location.pathname+window.location.search+window.location.hash;setEditingSchedule(active);}}><Pencil size={17}/>일정 수정</button>}{!active&&<button className="primary-button" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>setActionPanel('add')}><Plus size={18}/>일정 추가</button>}<button className="secondary-button download-priority desktop-workspace-action" onClick={()=>setExportScope(active?.id??null)} disabled={loading||uploading||!!error}><ArrowDownToLine size={17}/>다운로드</button><button className="secondary-button mobile-workspace-action schedule-photo-action" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={17}/>일정표 사진등록</button><button className="secondary-button icon-button" aria-label="폴더 더보기" disabled={uploading||cameraPending} onClick={()=>setActionPanel('more')}><MoreHorizontal size={20}/></button></div></section>
-        <MyWork key={view==='date'&&region&&date?JSON.stringify([region,date]):'today'} reportScope={view==='date'&&region&&date?{region,date}:undefined} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onFolder={(r,d,id)=>location(r,d,id,[],'date')}/>
-        <SurveyParticipants people={library?.summary.participants} date={active?.date||date||undefined}/>
-        {active?<div className="folder-operations-controls"><FolderDownloadStatus folder={active}/>{isAdmin&&<FolderParticipantManagement key={active.id+'-participants'} folder={active.id} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy} onSaved={()=>refreshOperationMetadata([active.id],{region:active.region,date:active.date})}/>}</div>:library&&<DownloadSummary summary={library.summary}/>}
-        {!active&&<div className="browse-toolbar"><div className="view-switch" role="group" aria-label="폴더 보기 방식">{(['date','address'] as const).map(mode=><button key={mode} aria-pressed={view===mode} disabled={uploading||remarksDirty||cameraPending} onClick={()=>location(region,null,null,[],mode)}>{mode==='date'?'날짜별 보기':'주소별 모아보기'}</button>)}</div></div>}
+        {region&&<div className="workspace-location"><button className="back-button" disabled={uploading||folderDeleteBusy} onClick={parentLocation}><ArrowLeft size={16}/>상위 폴더로</button>
+        <nav aria-label="현재 위치" className="breadcrumb"><button disabled={uploading} onClick={()=>location(null)}>전체 지역</button>{region&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region)}>{region}</button></>}{date&&<><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date)}>{date}</button></>}{pathLabels.map((label,i)=><span key={i} style={{display:'contents'}}><ChevronRight size={14}/><button disabled={uploading} onClick={()=>location(region,date,i===addressPath.length-1?selected:null,addressPath.slice(0,i+1))}>{label}</button></span>)}{active&&!addressPath.length&&<><ChevronRight size={14}/><span>{folderLabel(active)}</span></>}</nav></div>}
+        <section className="page-heading"><div className="page-title"><h1>{active?pathLabels.at(-1)||folderLabel(active):pathLabels.at(-1)||(date?`${date} 현장조사`:region||'현장조사 보관함')}</h1>{active&&<p className="folder-context">{[active.date,active.address].filter(Boolean).join(' · ')}</p>}</div><div className="heading-actions">{active&&<button className="secondary-button" disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy} onClick={()=>{scheduleLocation.current=window.location.pathname+window.location.search+window.location.hash;setEditingSchedule(active);}}><Pencil size={17}/>일정 수정</button>}{!active&&<button className="primary-button" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>setActionPanel('add')}><Plus size={18}/>일정 추가</button>}<button className="secondary-button download-priority desktop-workspace-action" onClick={()=>setExportScope(active?.id??null)} disabled={loading||uploading||!!error}><ArrowDownToLine size={17}/>다운로드</button><button className="secondary-button mobile-workspace-action schedule-photo-action" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setManualImport(false);setImporting(true);}}><CloudUpload size={17}/>일정표 사진등록</button><button className="secondary-button icon-button" aria-label="폴더 더보기" disabled={uploading||cameraPending} onClick={()=>setActionPanel('more')}><MoreHorizontal size={20}/></button></div></section>
+        {!active&&!selected&&<div className="browse-toolbar">
+          <label className="mobile-region-select"><span>조사 구역</span><select value={region??''} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onChange={e=>location(e.target.value||null,null,null,[],view)}>
+            <option value="">전체 지역</option>
+            {regions.map(item=><option key={item} value={item}>{item}</option>)}
+          </select></label>
+          <div className="view-switch" role="group" aria-label="폴더 보기 방식">
+            {(['date','address'] as const).map(mode=><button key={mode} aria-pressed={view===mode} disabled={uploading||remarksDirty||cameraPending} onClick={()=>location(region,null,null,[],mode)}>{mode==='date'?'날짜별 보기':'주소별 보기'}</button>)}
+          </div>
+          <FolderSearch query={searchQuery} onQuery={setSearchQuery}/>
+        </div>}
+        <div className="workspace-utilities"><MyWork key={view==='date'&&region&&date?JSON.stringify([region,date]):'today'} reportScope={view==='date'&&region&&date?{region,date}:undefined} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onFolder={(r,d,id)=>location(r,d,id,[],'date')}/>{!selected&&<div className="bulk-delete-toolbar"><BulkFolderDelete groups={deleteGroups} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy||!!error} onBusy={setFolderDeleteBusy} onDone={async ids=>{if(ids)cache.current.invalidate(key=>{const id=new URL(key).searchParams.get('folder');return !!id&&(ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>ids.includes(f.id)));});await refresh(selected,true);}}/></div>}</div>
+        <div className="workspace-context"><SurveyParticipants people={library?.summary.participants} date={active?.date||date||undefined}/>{!active&&library&&<DownloadSummary summary={library.summary}/>}</div>
+        {active&&<div className="folder-operations-controls"><FolderDownloadStatus folder={active}/>{isAdmin&&<FolderParticipantManagement key={active.id+'-participants'} folder={active.id} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy} onSaved={()=>refreshOperationMetadata([active.id],{region:active.region,date:active.date})}/>}</div>}
         {active&&<section className="mobile-visit-summary" aria-label="현장 핵심 정보"><div><span><Clock size={14}/>{active.time||'시간 미정'}</span><strong>{active.name||'연락 대상 미입력'}</strong><span className="visit-status">{active.surveyStatus||'미완료'}</span></div>{active.phones.length>0&&<div className="phone-list">{active.phones.map(p=><a key={p} href={'tel:'+p}><Phone size={14}/>{p}</a>)}</div>}{active.notes&&<div className="visit-notice"><strong>방문 전 확인사항</strong><p>{active.notes}</p></div>}</section>}
         {active&&<div className="folder-pane-nav" role="group" aria-label="폴더 작업 선택">{([{id:'photos',label:'사진',icon:ImageIcon},{id:'record',label:'조사 정보',icon:FileText},{id:'map',label:'길찾기',icon:MapPin}] as const).map(pane=><button key={pane.id} aria-pressed={folderPane===pane.id} disabled={uploading||cameraPending} onClick={()=>setFolderPane(pane.id)}><pane.icon size={18}/>{pane.label}</button>)}</div>}
         {active&&folderPane==='map'&&<MapDirections folder={active}/>}
         {!active&&view==='address'&&addressPath.length>=2&&library?.place&&<details className="building-directions" key={addressPath.join('/')}><summary><MapPin size={17}/>이 건물 길찾기<ChevronDown size={16}/></summary><MapDirections folder={library!.place!}/></details>}
-        {!selected&&<div className="bulk-delete-toolbar"><BulkFolderDelete groups={deleteGroups} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy||!!error} onBusy={setFolderDeleteBusy} onDone={async ids=>{if(ids)cache.current.invalidate(key=>{const id=new URL(key).searchParams.get('folder');return !!id&&(ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>ids.includes(f.id)));});await refresh(selected,true);}}/></div>}
-        {!active&&!selected&&<FolderSearch query={searchQuery} onQuery={setSearchQuery}/>}
         {error&&<div className="error-banner" role="alert"><TriangleAlert size={19}/><span>{error}</span><button onClick={()=>refresh(selected)}>다시 시도</button></div>}
         {usage&&(usage.storageBytes>=usage.storageLimit||usage.writes>=usage.writeLimit||usage.reads>=usage.readLimit)&&<div className="error-banner" role="status">보관함 사용 한도에 도달했습니다. 화면 아래 ‘보관함 사용량’에서 자세한 내용을 확인하세요.</div>}
         {!active&&!selected&&<><div className="overview-strip"><div><span>조사 일정</span><strong>{summary.schedules}<small>곳</small></strong></div><div><span>사진 있는 폴더</span><strong>{summary.withPhotos}<small>/ {summary.schedules}</small></strong></div><div><span>보관한 사진</span><strong>{summary.photos}<small>장</small></strong></div><div className="storage-stat"><CloudUpload size={20}/><span>원본 저장<small>{formatBytes(summary.bytes)}</small></span></div></div>
           <div className="section-heading"><h2><FolderOpen size={20}/>{searchQuery.trim()?'검색 결과':region&&(view==='address'||date)?'주소 폴더':region?'조사 날짜 폴더':'지역 폴더'} <span>{library?.totalCards||0}</span></h2><button className="subtle-button" onClick={()=>refresh(null)} disabled={loading}><RefreshCw size={15} className={loading?'spin':''}/>새로고침</button></div>
-          {loading&&!library?<div className="loading-block" role="status">폴더 목록을 불러오고 있어요.</div>:<><LibraryCards cards={cards} onOpen={openCard} search={!!searchQuery.trim()}/>{!cards.length&&<p role="status">{searchQuery.trim()?'검색 결과가 없습니다.':'등록된 일정이 없습니다.'}</p>}{library?.nextFoldersCursor&&<button className="secondary-button full-width" disabled={folderPageBusy} onClick={()=>void loadMoreFolders()}>{folderPageBusy?'불러오는 중…':'폴더 더 보기'}</button>}</>}
+          {loading&&!library?<div className="loading-block" role="status">폴더 목록을 불러오고 있어요.</div>:<><LibraryCards cards={cards} onOpen={openCard} search={!!searchQuery.trim()}/>{!cards.length&&<p className="library-empty" role="status">{searchQuery.trim()?'검색 결과가 없습니다.':'등록된 일정이 없습니다.'}</p>}{library?.nextFoldersCursor&&<button className="secondary-button full-width" disabled={folderPageBusy} onClick={()=>void loadMoreFolders()}>{folderPageBusy?'불러오는 중…':'폴더 더 보기'}</button>}</>}
         </>}
         {active&&<>{related.length>1&&<label className="section-heading">업로드·조사 메모를 저장할 일정 <select aria-label="업로드·조사 메모를 저장할 일정" value={active.id} disabled={uploading||remarksDirty||cameraPending} onChange={e=>location(region,date,e.target.value,addressPath)}>{related.map(f=><option key={f.id} value={f.id}>{f.date} · {f.time} · {f.name||f.lot}</option>)}</select></label>}{view==='address'&&<p className="scope-note">모든 날짜의 사진 · 새 기록은 {active.date} 일정에 저장</p>}<div hidden={folderPane!=='record'} className="record-pane"><section className="site-details"><div><span className="detail-label"><Clock size={14}/>방문 시간</span><strong>{active.time}</strong></div><div><span className="detail-label"><UserRound size={14}/>연락 대상</span><strong>{active.name}</strong><div className="phone-list">{active.phones.map(p=><a key={p} href={'tel:'+p}><Phone size={13}/>{p}</a>)}</div></div><div className="visit-note"><span className="detail-label"><TriangleAlert size={14}/>조사 메모</span><p>{active.notes}</p></div></section>
           <AttributionLabel value={active.createdBy} label="일정 등록"/>{active.scheduleUpdatedBy&&<AttributionLabel value={active.scheduleUpdatedBy} label="최근 일정 수정"/>}{active.surveyUpdatedBy&&<AttributionLabel value={active.surveyUpdatedBy} label="최근 조사 수정"/>}<FolderRemarks key={active.id} folder={active} onDirty={setRemarksDirty} onSaved={()=>refresh(selected,true)}/></div><div hidden={folderPane!=='photos'} className="photos-pane"><div className="media-tabs" role="group" aria-label="사진 종류">{(['photo','drawing'] as const).map(kind=><button key={kind} className={mediaKind===kind?'primary-button':'secondary-button'} aria-pressed={mediaKind===kind} disabled={uploading||cameraPending||failed.length>0} onClick={()=>setMediaKind(kind)}>{kind==='drawing'?'도면':'현장 사진'} · {related.reduce((n,f)=>n+(kind==='photo'?(f.photoCount??f.count):(f.drawingCount??0)),0)}</button>)}</div><h2 className="sr-only">{mediaLabel} {visiblePhotos.length}장</h2>
@@ -256,7 +334,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
           <p className="export-help">한도에 도달하면 해당 업로드·사진 열기·다운로드가 중단됩니다. 기존 자료는 자동 삭제되지 않습니다. 사진 읽기에는 미리보기와 ZIP에 담긴 각 파일이 포함됩니다.</p>
           {(usage.storageBytes>=usage.storageLimit||usage.writes>=usage.writeLimit||usage.reads>=usage.readLimit)&&<p className="error-banner" role="status">사용 한도에 도달했습니다. 저장 공간은 불필요한 사진을 직접 삭제하면 확보할 수 있고, 요청 한도는 최근 32일 사용량이 줄어들면 다시 이용할 수 있습니다.</p>}
         </section></details>}
-        <div className="management-tools"><ActivityHistory key={selected||'all'} folder={selected||undefined} disabled={uploading||cameraPending||folderDeleteBusy}/>{isAdmin&&<MemberManagement disabled={uploading||cameraPending||folderDeleteBusy}/>}<BackupTools onDone={()=>{cache.current.invalidate();return refresh(selected,true);}}/><PendingUploads owner={storageScope} folders={folders} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onBusy={setFolderDeleteBusy} onDone={ids=>{cache.current.invalidate(key=>{const id=new URL(key).searchParams.get('folder');return !id||ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>ids.includes(f.id));});return refresh(selected,true);}}/></div><footer className="workspace-footer"><span><LockKeyhole size={13}/>로그인한 팀원이 함께 사용하는 보관함</span><span>{userName} {isAdmin&&<Link prefetch={false} href="/account/setup">계정 설정</Link>} <button className="subtle-button" disabled={uploading||remarksDirty||cameraPending} onClick={async()=>{try{const r=await fetch('/api/session',{method:'DELETE'});if(!r.ok)throw new Error();announceAuthChange();cache.current.clear();window.location.assign('/');}catch{toast.error('로그아웃하지 못했습니다. 다시 시도해 주세요.');}}}>로그아웃</button></span></footer>
+        <div className="management-tools"><ActivityHistory key={selected||'all'} folder={selected||undefined} disabled={uploading||cameraPending||folderDeleteBusy}/>{isAdmin&&<MemberManagement disabled={uploading||cameraPending||folderDeleteBusy}/>}<BackupTools onDone={()=>{cache.current.invalidate();return refresh(selected,true);}}/><PendingUploads owner={storageScope} folders={folders} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onBusy={setFolderDeleteBusy} onDone={ids=>{cache.current.invalidate(key=>{const id=new URL(key).searchParams.get('folder');return !id||ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>ids.includes(f.id));});return refresh(selected,true);}}/></div>
       </main>
     </div>
     <Dialog open={actionPanel!==null} onOpenChange={open=>{if(!open)setActionPanel(null);}}><DialogContent className="workspace-action-dialog"><DialogHeader><DialogTitle>{actionPanel==='add'?'일정 추가':'폴더 작업'}</DialogTitle><DialogDescription>{actionPanel==='add'?'일정표 사진을 등록하거나 직접 입력하세요.':'현재 폴더의 일정과 보고서를 관리합니다.'}</DialogDescription></DialogHeader><div className="action-list"><button className={actionPanel==='more'?'secondary-button desktop-workspace-action':'secondary-button'} disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(false);setImporting(true);}}><CloudUpload size={19}/><span>일정표 사진 등록<small>사진에서 일정을 인식해 추가</small></span></button><button className="secondary-button" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(true);setImporting(true);}}><Plus size={19}/><span>일정 직접 입력<small>추가 방문 일정도 바로 등록</small></span></button>{actionPanel==='more'&&<><button className="secondary-button mobile-workspace-action" disabled={loading||uploading||!!error} onClick={()=>{setActionPanel(null);setExportScope(active?.id??null);}}><ArrowDownToLine size={19}/><span>다운로드<small>현재 폴더의 현장 사진 내려받기</small></span></button>{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={loading||uploading} onClick={()=>{setActionPanel(null);void refresh(selected);}}><RefreshCw size={18}/>새로고침</button>{region&&(!addressPath.length||active)&&<button className="secondary-button danger-action" disabled={loading||uploading||remarksDirty||folderDeleteBusy||cameraPending} onClick={()=>{setActionPanel(null);setFolderDelete(true);}}><Trash2 size={18}/>{active?'선택 일정 삭제':'폴더 삭제'}</button>}</>}</div></DialogContent></Dialog>
