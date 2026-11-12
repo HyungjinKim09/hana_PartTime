@@ -1,10 +1,25 @@
 import {checkLoginTurnstile} from './turnstile.ts';
 
-type AuthLimiters={TURNSTILE_SITE_KEY?:string;TURNSTILE_SECRET?:string;AUTH_LOGIN_IP?:RateLimit;AUTH_LOGIN_TOTAL?:RateLimit;AUTH_SESSION_IP?:RateLimit;AUTH_SESSION_TOTAL?:RateLimit};
+const retry={'Retry-After':'60'};
+function deny(error:string,status:number,extra:Record<string,string>={}){
+ return Response.json({error},{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...extra}});
+}
+function tooMany(){return deny('요청이 많습니다. 1분 후 다시 시도해 주세요.',429,retry);}
+async function limitSiteRequest(request:Request,path:string,env:Cloudflare.Env,ip:string){
+ const media=(request.method==='GET'||request.method==='HEAD')&&/^\/api\/(?:photos|export)\/[^/]+$/.test(path);
+ const api=path==='/api'||path.startsWith('/api/');
+ const limiter=media?env.SITE_MEDIA_IP:api?env.SITE_API_IP:env.SITE_PAGE_IP;
+ try{
+  if(limiter)return (await limiter.limit({key:ip})).success?null:tooMany();
+ }catch{
+  // Treat a missing or unavailable limiter the same way before accessing storage.
+ }
+ return deny('요청 제한 기능에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',503,retry);
+}
 
 // Mirror the router's segment decoding, dot/slash normalization and .rsc alias.
 // Classification never keys counters on a caller-controlled username or cookie.
-function authPath(pathname:string){
+function requestPath(pathname:string){
  const parts:string[]=[];
  for(const raw of pathname.split('/')){
   const part=decodeURIComponent(raw);
@@ -14,11 +29,11 @@ function authPath(pathname:string){
  }
  return ('/'+parts.join('/')).replace(/\.rsc$/,'');
 }
-export async function authIngress(request:Request,env:AuthLimiters):Promise<Response|null>{
+export async function requestIngress(request:Request,env:Cloudflare.Env):Promise<Response|null>{
  const url=new URL(request.url);let path:string;
- const deny=(error:string,status:number,extra:Record<string,string>={})=>Response.json({error},{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...extra}});
- try{path=authPath(url.pathname);}catch{return deny('요청 경로를 확인해 주세요.',400);}
- if(!['/api/session','/api/account','/api/session/refresh'].includes(path))return null;
+ try{path=requestPath(url.pathname);}catch{return deny('요청 경로를 확인해 주세요.',400);}
+ const ip=request.headers.get('cf-connecting-ip')||'unknown';
+ if(!['/api/session','/api/account','/api/session/refresh'].includes(path))return limitSiteRequest(request,path,env,ip);
  const methods=path==='/api/session'?['POST','DELETE']:['POST'];
  if(!methods.includes(request.method))return deny('허용되지 않은 요청입니다.',405,{Allow:methods.join(', ')});
  if(request.headers.get('sec-fetch-site')==='cross-site'||request.headers.get('origin')!==url.origin)return deny('이 사이트의 로그인 화면에서 다시 시도해 주세요.',403);
@@ -26,10 +41,9 @@ export async function authIngress(request:Request,env:AuthLimiters):Promise<Resp
  const perIp=login?env.AUTH_LOGIN_IP:env.AUTH_SESSION_IP,total=login?env.AUTH_LOGIN_TOTAL:env.AUTH_SESSION_TOTAL;
  // Missing/broken protection must never silently fall through to D1.
  if(!perIp||!total)return deny('로그인 보호 기능에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',503,{'Retry-After':'60'});
- const ip=request.headers.get('cf-connecting-ip')||'unknown';
  try{
   const prefix=login?'hana:login:':'hana:session:';
-  if(!(await perIp.limit({key:prefix+ip})).success||!(await total.limit({key:prefix+'all'})).success)return deny('요청이 많습니다. 1분 후 다시 시도해 주세요.',429,{'Retry-After':'60'});
+  if(!(await perIp.limit({key:prefix+ip})).success||!(await total.limit({key:prefix+'all'})).success)return tooMany();
  }catch{return deny('로그인 보호 기능에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',503,{'Retry-After':'60'});}
  if(path==='/api/session'&&request.method==='POST'){
   const result=await checkLoginTurnstile(request,env);

@@ -3,7 +3,7 @@ import {COOKIE,REFRESH_COOKIE,cookieValue,lookupSession} from '../lib/session-lo
 import {refreshSession,tokenCookies,upgradeLegacySession} from '../lib/refresh-sessions';
 import {guardedBucket,BudgetError} from '../lib/r2-budget';
 import {withSessionRequest} from '../lib/session-context';
-import {authIngress} from '../lib/auth-ingress';
+import {requestIngress} from '../lib/auth-ingress';
 
 // Return the native R2 stream directly. Framework transport of binary bodies
 // adds per-chunk CPU cost, which can terminate large downloads on Workers Free.
@@ -43,9 +43,9 @@ function allowsSignedRead(request:Request,path:string){
 
 export default {
   async fetch(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
-    const blocked=await authIngress(request,env);if(blocked)return blocked;
+    const blocked=await requestIngress(request,env);if(blocked)return blocked;
     const path=new URL(request.url).pathname,cookies=request.headers.get('cookie')||'';
-    return withSessionRequest(async()=>{
+    const response=await withSessionRequest(async()=>{
     const authRoute=path==='/api/account'||path==='/api/session'||path.startsWith('/api/session/');
     const navigation=request.method==='GET'&&request.headers.get('sec-fetch-mode')==='navigate'&&request.headers.get('sec-fetch-dest')==='document';
     const sameOrigin=(!request.headers.get('origin')||request.headers.get('origin')===new URL(request.url).origin)&&(request.headers.get('sec-fetch-site')!=='cross-site'||navigation);
@@ -67,5 +67,14 @@ export default {
       return Response.json({error:'로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'},{status:503,headers:{'Cache-Control':'no-store'}});
     }
     },env.ADMIN_SETUP_KEY,allowsSignedRead(request,path));
+    if(!response.headers.get('content-type')?.startsWith('text/html'))return response;
+
+    const document=new Response(response.body,response);
+    document.headers.append('Content-Security-Policy',"frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+    document.headers.set('X-Frame-Options','DENY');
+    if(request.url.startsWith('https://')&&!document.headers.has('Strict-Transport-Security')){
+      document.headers.set('Strict-Transport-Security','max-age=31536000');
+    }
+    return document;
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

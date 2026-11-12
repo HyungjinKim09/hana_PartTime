@@ -14,5 +14,8 @@ declare namespace Cloudflare {
     AUTH_LOGIN_TOTAL?: RateLimit;
     AUTH_SESSION_IP?: RateLimit;
     AUTH_SESSION_TOTAL?: RateLimit;
+    SITE_PAGE_IP?: RateLimit;
+    SITE_API_IP?: RateLimit;
+    SITE_MEDIA_IP?: RateLimit;
   }
 }

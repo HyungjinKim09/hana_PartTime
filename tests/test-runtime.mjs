@@ -3,7 +3,7 @@ import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
-import {authRateLimits} from '../cloudflare/auth-rate-config.ts';
+import {workerRateLimits} from '../cloudflare/auth-rate-config.ts';
 const require=createRequire(import.meta.url);
 const {Miniflare}=createRequire(require.resolve('wrangler/package.json'))('miniflare');
 export const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64');
@@ -12,7 +12,7 @@ export async function testRuntime(options={}){
  const paths=(await readdir(root,{recursive:true})).filter(p=>/\.(m?js)$/.test(p));
  const adminKey='synthetic-local-test-admin-0123456789',owner='synthetic-owner',origin='https://hana.test';
  const entry=options.entryWrapper?[{type:'ESModule',path:root+'synthetic-entry.js',contents:options.entryWrapper}]:[];
- const ratelimits=Object.fromEntries(authRateLimits.map(binding=>[binding.name,{simple:{...binding.simple,limit:options.productionAuthLimits?binding.simple.limit:10000}}]));
+ const ratelimits=Object.fromEntries(workerRateLimits.map(binding=>[binding.name,{simple:{...binding.simple,limit:options.productionAuthLimits?binding.simple.limit:10000}}]));
  const mf=new Miniflare({modules:[...entry,{type:'ESModule',path:root+'index.js'},...paths.filter(p=>p!=='index.js').map(p=>({type:'ESModule',path:root+p}))],modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'synthetic-db'},r2Buckets:['BUCKET'],ratelimits,bindings:{ADMIN_SETUP_KEY:adminKey,SITE_DATA_OWNER:owner,...options.bindings},...(options.outboundService?{outboundService:options.outboundService}:{}),cf:false});
  const db=await mf.getD1Database('DB');
  for(const file of (await readdir(new URL('../drizzle/',import.meta.url))).filter(f=>f.endsWith('.sql')).sort()){await options.beforeMigration?.(db,file);for(const sql of (await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8')).split('--> statement-breakpoint'))await db.prepare(sql.trim()).run();}
