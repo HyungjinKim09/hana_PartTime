@@ -1,6 +1,5 @@
-import {readFile,mkdir,writeFile,access,appendFile} from 'node:fs/promises';
+import {readFile,mkdir,writeFile,appendFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
-import {randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 
@@ -29,13 +28,14 @@ if(process.argv.includes('--check')){
   run(wrangler,['deploy','--config','dist/server/wrangler.json','--dry-run']);
   console.log('로컬 배포 검증 완료. 원격 배포는 수행하지 않았습니다.');
 }else{
-  // An unattended failed auth must not silently choose or create another account.
-  run(wrangler,['d1','migrations','apply','DB','--remote','--config','dist/server/wrangler.json']);
-  await mkdir('.deploy-secrets',{recursive:true,mode:0o700});
   const secrets=resolve('.deploy-secrets/production.json');
-  try{await access(secrets);}catch{await writeFile(secrets,JSON.stringify({ADMIN_SETUP_KEY:randomBytes(32).toString('hex')}),{mode:0o600,flag:'wx'});}
-  const key=JSON.parse(await readFile(secrets,'utf8')).ADMIN_SETUP_KEY;
-  if(typeof key!=='string'||key.length<32)throw new Error('관리 키가 올바르지 않습니다.');
+  const {ADMIN_SETUP_KEY,TURNSTILE_SITE_KEY,TURNSTILE_SECRET}=JSON.parse(await readFile(secrets,'utf8'));
+  if(typeof ADMIN_SETUP_KEY!=='string'||ADMIN_SETUP_KEY.length<32)throw new Error('관리 키가 올바르지 않습니다.');
+  if(typeof TURNSTILE_SITE_KEY!=='string'||!TURNSTILE_SITE_KEY.trim()||typeof TURNSTILE_SECRET!=='string'||!TURNSTILE_SECRET.trim()){
+    throw new Error('운영 배포 전에 Turnstile 사이트 키와 비밀 키를 설정해 주세요.');
+  }
+  // Validate the login configuration before touching the production database.
+  run(wrangler,['d1','migrations','apply','DB','--remote','--config','dist/server/wrangler.json']);
   const output=run(wrangler,['deploy','--config','dist/server/wrangler.json','--secrets-file',secrets],true);
   const provenance=JSON.parse(await readFile('dist/build-provenance.json','utf8'));
   await mkdir('.sites-runtime',{recursive:true});

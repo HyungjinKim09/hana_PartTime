@@ -16,6 +16,9 @@ export const siteRefreshSessions=sqliteTable('site_refresh_sessions',{
 export const siteLoginLimits=sqliteTable('site_login_limits',{
   key:text('key').primaryKey(),attempts:integer('attempts').notNull(),expiresAt:integer('expires_at').notNull(),
 });
+export const siteAccountLoginLimits=sqliteTable('site_account_login_limits',{
+  key:text('key').primaryKey(),failures:integer('failures').notNull(),blockedUntil:integer('blocked_until').notNull(),expiresAt:integer('expires_at').notNull(),
+},t=>[index('site_account_login_limits_expiry').on(t.expiresAt)]);
 export const photos=sqliteTable('photos',{createdBy:text('created_by'),deletedBy:text('deleted_by'),restored:integer('restored').notNull().default(0),
   kind:text('kind').notNull().default('photo'),
   id:text('id').primaryKey(), owner:text('owner').notNull(), folder:text('folder').notNull(),

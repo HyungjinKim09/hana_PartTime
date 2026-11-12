@@ -1,8 +1,7 @@
 import {z} from 'zod';
-import {ApiError,failure,identity,identityUser,json,limitedBody,requireSameOrigin,storage} from '@/lib/storage';
+import {ApiError,failure,identityUser,json,limitedBody,requireSameOrigin,storage} from '@/lib/storage';
 import {allowLogin,validAdminKey} from '@/lib/site-auth';
 import {budgetUsage} from '@/lib/r2-budget';
-export async function GET(){try{await identity();return json(await budgetUsage(storage().db));}catch(e){return failure(e);}}
 export async function PUT(request:Request){try{
  requireSameOrigin(request);if(!(await identityUser(request)).isAdmin)throw new ApiError('관리자만 저장 한도를 변경할 수 있습니다.',403);
  if(!await allowLogin(request,'settings'))throw new ApiError('설정 시도가 많습니다. 잠시 후 다시 시도해 주세요.',429);

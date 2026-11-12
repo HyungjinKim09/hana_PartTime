@@ -36,7 +36,7 @@ async function handle(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
 }
 
 const signedReadPaths=new Set(['/', '/api/activity', '/api/drawings', '/api/identity', '/api/library',
-  '/api/my-work', '/api/report', '/api/schedules', '/api/settings', '/api/thumbnails']);
+  '/api/my-work', '/api/report', '/api/schedules']);
 function allowsSignedRead(request:Request,path:string){
   return request.method==='GET'&&(signedReadPaths.has(path)||/^\/api\/photos\/[^/]+$/.test(path));
 }

@@ -15,6 +15,10 @@ try{
  assert.equal(ids.length,7);assert.equal(new Set(ids).size,7);
  assert.equal((await t.request('/api/library?folder=fixture&photosOnly=1&cursor=bad')).status,400);
  await t.request('/api/library?id='+ids[0],{method:'DELETE'});assert.equal((await(await t.request('/api/library?folder=fixture')).json()).folders[0].count,6);
+ assert.equal((await t.request('/api/settings')).status,405,'unused settings read is unavailable');
+ assert.equal((await t.request('/api/thumbnails?photo='+ids[1])).status,404,'unused thumbnail read is unavailable');
+ assert.equal((await t.request('/api/thumbnails?photo='+ids[1],{method:'PUT',body:png})).status,404,'unused thumbnail write is unavailable');
+ assert.ok(info.photos.every(photo=>!Object.hasOwn(photo,'has_thumbnail')));
  const settings={storageGB:12,acknowledgeCost:true};
  assert.equal((await t.request('/api/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(settings)})).status,403);
  assert.equal((await t.request('/api/settings',{method:'PUT',headers:{'content-type':'application/json','x-admin-key':t.adminKey},body:JSON.stringify({...settings,acknowledgeCost:false})})).status,400);

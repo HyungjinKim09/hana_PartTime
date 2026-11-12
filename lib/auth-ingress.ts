@@ -1,4 +1,6 @@
-type AuthLimiters={AUTH_LOGIN_IP?:RateLimit;AUTH_LOGIN_TOTAL?:RateLimit;AUTH_SESSION_IP?:RateLimit;AUTH_SESSION_TOTAL?:RateLimit};
+import {checkLoginTurnstile} from './turnstile.ts';
+
+type AuthLimiters={TURNSTILE_SITE_KEY?:string;TURNSTILE_SECRET?:string;AUTH_LOGIN_IP?:RateLimit;AUTH_LOGIN_TOTAL?:RateLimit;AUTH_SESSION_IP?:RateLimit;AUTH_SESSION_TOTAL?:RateLimit};
 
 // Mirror the router's segment decoding, dot/slash normalization and .rsc alias.
 // Classification never keys counters on a caller-controlled username or cookie.
@@ -29,5 +31,10 @@ export async function authIngress(request:Request,env:AuthLimiters):Promise<Resp
   const prefix=login?'hana:login:':'hana:session:';
   if(!(await perIp.limit({key:prefix+ip})).success||!(await total.limit({key:prefix+'all'})).success)return deny('요청이 많습니다. 1분 후 다시 시도해 주세요.',429,{'Retry-After':'60'});
  }catch{return deny('로그인 보호 기능에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.',503,{'Retry-After':'60'});}
+ if(path==='/api/session'&&request.method==='POST'){
+  const result=await checkLoginTurnstile(request,env);
+  if(result==='invalid')return deny('로그인 보안 확인을 다시 진행해 주세요.',403);
+  if(result==='unavailable')return deny('로그인 보안 확인에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',503);
+ }
  return null;
 }
