@@ -23,8 +23,12 @@ export const photos=sqliteTable('photos',{createdBy:text('created_by'),deletedBy
   kind:text('kind').notNull().default('photo'),
   id:text('id').primaryKey(), owner:text('owner').notNull(), folder:text('folder').notNull(),
   filename:text('filename').notNull(), objectKey:text('object_key').notNull(), thumbnailKey:text('thumbnail_key'),
+  version:text('version').notNull().default(''), deleteBatch:text('delete_batch'),
   contentType:text('content_type').notNull(), size:integer('size').notNull(), createdAt:text('created_at').notNull(), deleted:integer('deleted').notNull().default(0),
 }, table=>[index('photos_owner_folder_created').on(table.owner,table.folder,table.createdAt)]);
+export const photoDeleteJobs=sqliteTable('photo_delete_jobs',{
+ owner:text('owner').notNull(),id:text('id').notNull(),actor:text('actor').notNull(),folders:text('folders').notNull(),createdAt:integer('created_at').notNull(),startedBy:text('started_by'),
+}, table=>[primaryKey({columns:[table.owner,table.id]})]);
 export const folderSeedState=sqliteTable('folder_seed_state',{owner:text('owner').primaryKey()});
 export const scheduleOcrUsage=sqliteTable('schedule_ocr_usage',{month:text('month').primaryKey(),requests:integer('requests').notNull().default(0)});
 export const surveyFolders=sqliteTable('survey_folders',{assignedParticipants:text('assigned_participants').notNull().default('[]'),assignedParticipantsBy:text('assigned_participants_by'),participantsRevision:integer('participants_revision').notNull().default(1),photoRevision:integer('photo_revision').notNull().default(0),downloadPhotoRevision:integer('download_photo_revision'),downloadedBy:text('downloaded_by'),downloadUpdatedBy:text('download_updated_by'),downloadRevision:integer('download_revision').notNull().default(1),scheduleUpdatedBy:text('schedule_updated_by'),surveyUpdatedBy:text('survey_updated_by'),createdBy:text('created_by'),updatedBy:text('updated_by'),deletedBy:text('deleted_by'),restored:integer('restored').notNull().default(0),

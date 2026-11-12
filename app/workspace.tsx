@@ -39,6 +39,7 @@ import {MapDirections} from './map-directions';
 import {BatchCamera} from './batch-camera';
 import {uploadPhotos} from '@/lib/photo-upload';
 import {useUploadPreviews} from './use-upload-previews';
+import {PhotoPreview,photoUrl} from './photo-preview';
 const DrawingEditor=lazy(()=>import('./drawing-editor').then(m=>({default:m.DrawingEditor})));
 import {ArchiveDownload} from './archive-download';
 
@@ -162,6 +163,21 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     if(preview?.id===deleting.id)setPreview(null);
     toast.success('사진을 삭제했어요.');setDeleting(null);await refresh(selected,true);
   }catch(e){toast.error(e instanceof Error?e.message:'삭제하지 못했습니다.');}finally{setDeleteBusy(false);}}
+  function photoRotationSaved(photo:Photo){
+    uploadPreviews.remove(item=>item.photo?.id===photo.id);
+    setPhotos(items=>items.map(item=>item.id===photo.id?photo:item));
+    setPreview(current=>current?.id===photo.id?photo:current);
+    toast.success('회전한 사진을 저장했어요.');
+    const folder=folders.find(item=>item.id===photo.folder);
+    void refreshOperationMetadata([photo.folder],{region:folder?.region,date:folder?.date});
+  }
+  async function bulkDeleteDone(ids?:string[]){
+    if(ids)cache.current.invalidate(key=>{
+      const id=new URL(key).searchParams.get('folder');
+      return !!id&&(ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders?.some(folder=>ids.includes(folder.id)));
+    });
+    await refresh(selected,true);
+  }
   const exportFolder=folders.find(f=>f.id===exportScope);
   const pathLabels=library?.pathLabels||[];
   const related=[...folders].sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
@@ -290,7 +306,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
           </div>
           <FolderSearch query={searchQuery} onQuery={setSearchQuery}/>
         </div>}
-        <div className="workspace-utilities"><MyWork key={view==='date'&&region&&date?JSON.stringify([region,date]):'today'} reportScope={view==='date'&&region&&date?{region,date}:undefined} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onFolder={(r,d,id)=>location(r,d,id,[],'date')}/>{!selected&&<div className="bulk-delete-toolbar"><BulkFolderDelete groups={deleteGroups} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy||!!error} onBusy={setFolderDeleteBusy} onDone={async ids=>{if(ids)cache.current.invalidate(key=>{const id=new URL(key).searchParams.get('folder');return !!id&&(ids.includes(id)||!!cache.current.peek<LibraryPage>(key)?.folders.some(f=>ids.includes(f.id)));});await refresh(selected,true);}}/></div>}</div>
+        <div className="workspace-utilities"><MyWork key={view==='date'&&region&&date?JSON.stringify([region,date]):'today'} reportScope={view==='date'&&region&&date?{region,date}:undefined} disabled={uploading||remarksDirty||cameraPending||folderDeleteBusy} onFolder={(r,d,id)=>location(r,d,id,[],'date')}/>{!selected&&<div className="bulk-delete-toolbar">{[false,true].map(photosOnly=><BulkFolderDelete key={String(photosOnly)} photosOnly={photosOnly} groups={deleteGroups} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy||!!error} onBusy={setFolderDeleteBusy} onDone={bulkDeleteDone}/>)}</div>}</div>
         <div className="workspace-context"><SurveyParticipants people={library?.summary.participants} date={active?.date||date||undefined}/>{!active&&library&&<DownloadSummary summary={library.summary}/>}</div>
         {active&&<div className="folder-operations-controls"><FolderDownloadStatus folder={active}/>{isAdmin&&<FolderParticipantManagement key={active.id+'-participants'} folder={active.id} disabled={loading||uploading||remarksDirty||cameraPending||folderDeleteBusy} onSaved={()=>refreshOperationMetadata([active.id],{region:active.region,date:active.date})}/>}</div>}
         {active&&<section className="mobile-visit-summary" aria-label="현장 핵심 정보"><div><span><Clock size={14}/>{active.time||'시간 미정'}</span><strong>{active.name||'연락 대상 미입력'}</strong><span className="visit-status">{active.surveyStatus||'미완료'}</span></div>{active.phones.length>0&&<div className="phone-list">{active.phones.map(p=><a key={p} href={'tel:'+p}><Phone size={14}/>{p}</a>)}</div>}{active.notes&&<div className="visit-notice"><strong>방문 전 확인사항</strong><p>{active.notes}</p></div>}</section>}
@@ -317,7 +333,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
               <div className="photo-meta"><strong title={item.file.name}>{item.file.name}</strong><span>{formatBytes(item.file.size)} · 기기 원본 미리보기</span><span className={'photo-upload-status '+item.status}>{item.status==='failed'?'저장 실패':item.status==='uploading'?'전송 중 · 아직 저장되지 않음':'전송 대기 · 아직 저장되지 않음'}</span>{item.error&&<p className="photo-upload-error">{item.error}</p>}</div>
             </article>)}
             {visiblePhotos.map(photo=><article className="photo-card" key={photo.id}>
-              <button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<img src={localPhotos.get(photo.id)?.url||'/api/photos/'+photo.id} alt={photo.filename} loading="lazy" decoding="async"/>}</button>
+              <button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<img src={(photo.version?undefined:localPhotos.get(photo.id)?.url)||photoUrl(photo)} alt={photo.filename} loading="lazy" decoding="async"/>}</button>
               <div className="photo-meta"><strong title={photo.filename}>{photo.filename}</strong><span>{folderDates.get(photo.folder)} 조사 · {dateText(photo.created_at)} · {formatBytes(photo.size)}</span>{localPhotos.has(photo.id)&&<span className="photo-upload-status saved"><Check size={14}/>저장 완료 · {((localPhotos.get(photo.id)?.elapsedMs||0)/1000).toFixed(1)}초</span>}<AttributionLabel value={photo.createdBy} label="업로드"/>{photo.kind==='drawing'&&<button className="secondary-button" disabled={uploading} onClick={()=>setDrawingPhoto(photo)}>자동 도면 만들기 · 비지오</button>}<div className="photo-actions"><a href={'/api/photos/'+photo.id+'?download=1'} download aria-label={photo.filename+' 다운로드'}><ArrowDownToLine size={17}/></a><button disabled={uploading} onClick={()=>setDeleting(photo)} aria-label={photo.filename+' 삭제'}><Trash2 size={16}/></button></div></div>
             </article>)}
           </div>:!error&&<div className="empty-photos"><ImageIcon size={36} strokeWidth={1.2}/><h3>아직 보관한 {mediaLabel}이 없어요</h3><p>추가한 {mediaLabel}은 이 건물에 원본으로 저장됩니다.</p></div>}
@@ -338,7 +354,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
       </main>
     </div>
     <Dialog open={actionPanel!==null} onOpenChange={open=>{if(!open)setActionPanel(null);}}><DialogContent className="workspace-action-dialog"><DialogHeader><DialogTitle>{actionPanel==='add'?'일정 추가':'폴더 작업'}</DialogTitle><DialogDescription>{actionPanel==='add'?'일정표 사진을 등록하거나 직접 입력하세요.':'현재 폴더의 일정과 보고서를 관리합니다.'}</DialogDescription></DialogHeader><div className="action-list"><button className={actionPanel==='more'?'secondary-button desktop-workspace-action':'secondary-button'} disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(false);setImporting(true);}}><CloudUpload size={19}/><span>일정표 사진 등록<small>사진에서 일정을 인식해 추가</small></span></button><button className="secondary-button" disabled={loading||uploading||remarksDirty||cameraPending} onClick={()=>{setActionPanel(null);setManualImport(true);setImporting(true);}}><Plus size={19}/><span>일정 직접 입력<small>추가 방문 일정도 바로 등록</small></span></button>{actionPanel==='more'&&<><button className="secondary-button mobile-workspace-action" disabled={loading||uploading||!!error} onClick={()=>{setActionPanel(null);setExportScope(active?.id??null);}}><ArrowDownToLine size={19}/><span>다운로드<small>현재 폴더의 현장 사진 내려받기</small></span></button>{region&&date&&<DailyReportButton region={region} date={date} disabled={loading||uploading||remarksDirty||!!error}/>}<button className="secondary-button" disabled={loading||uploading} onClick={()=>{setActionPanel(null);void refresh(selected);}}><RefreshCw size={18}/>새로고침</button>{region&&(!addressPath.length||active)&&<button className="secondary-button danger-action" disabled={loading||uploading||remarksDirty||folderDeleteBusy||cameraPending} onClick={()=>{setActionPanel(null);setFolderDelete(true);}}><Trash2 size={18}/>{active?'선택 일정 삭제':'폴더 삭제'}</button>}</>}</div></DialogContent></Dialog>
-    <Dialog open={!!preview} onOpenChange={open=>{if(!open)setPreview(null);}}><DialogContent className="photo-dialog"><DialogHeader><DialogTitle>{preview?.filename}</DialogTitle><DialogDescription>원본 사진 · {preview&&formatBytes(preview.size)}</DialogDescription></DialogHeader>{preview&&(preview.content_type==='image/heic'?<p>이 브라우저에서는 HEIC 미리보기를 지원하지 않을 수 있어요. 원본을 내려받아 확인해 주세요.</p>:<img className="large-preview" src={localPhotos.get(preview.id)?.url||'/api/photos/'+preview.id} alt={preview.filename}/>)}{preview&&<a className="secondary-button" href={'/api/photos/'+preview.id+'?download=1'} download><ArrowDownToLine size={17}/>원본 다운로드</a>}</DialogContent></Dialog>
+    {preview&&<PhotoPreview key={photoUrl(preview)} photo={preview} size={formatBytes(preview.size)} disabled={uploading||folderDeleteBusy} onClose={()=>setPreview(null)} onSaved={photoRotationSaved}/>}
     <Dialog open={exportScope!==undefined} onOpenChange={open=>{if(!open)setExportScope(undefined);}}><DialogContent className="archive-dialog"><DialogHeader><DialogTitle>폴더 그대로 다운로드</DialogTitle><DialogDescription>현재 선택한 폴더부터 시작하는 ZIP 파일로 받습니다. 완료 후에도 다시 다운로드할 수 있습니다.</DialogDescription></DialogHeader><div className="export-summary"><Archive size={30}/><div><strong>{(exportFolder?folderLabel(exportFolder):'')||[region,date].filter(Boolean).join(' / ')||'모든 지역과 날짜'}</strong><p>전체 {summary.schedules}개 일정 폴더 · {summary.fieldPhotos}장 · {formatBytes(summary.fieldBytes)}</p></div></div><div className="export-path"><FolderIcon size={17}/>{view==='address'?'일반건물·구분건물 / 주소 / 동·호수 / 사진 (날짜 폴더 없음)':'날짜 / 기존 일정 폴더 / 사진'}</div><p className="export-help">현재 보기의 폴더 구조로 현장 사진만 내려받습니다. 주소별 보기에서는 날짜 폴더 없이 같은 주소의 사진을 모읍니다. 파일명에 고유번호를 붙여 사진을 모두 보존합니다.</p><ArchiveDownload key={exportQuery.toString()} onStatusChanged={ids=>refreshOperationMetadata(ids,{region:region||undefined,date:view==='date'?date||undefined:undefined})} name={exportFolder?exportFolderLabel(exportFolder):date||region||'현장사진_전체'} query={exportQuery} folderCounts={{total:summary.schedules,withPhotos:summary.withFieldPhotos}} onComplete={()=>{cache.current.invalidate(key=>new URL(key).searchParams.has('usageOnly'));void auxiliary();}}/></DialogContent></Dialog>
     {drawingPhoto&&<Suspense fallback={<div role="status">도면 편집기를 불러오는 중…</div>}><DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/></Suspense>}
     {editingSchedule&&<EditSchedule key={editingSchedule.id} folder={editingSchedule} onClose={()=>setEditingSchedule(null)} onSaved={async updated=>{

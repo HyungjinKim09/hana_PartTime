@@ -1,9 +1,10 @@
 import {attribution} from '@/lib/attribution';
 import {z} from 'zod';
-import {identity,identityUser,storage,json,failure,limitedBody,ApiError} from '@/lib/storage';
+import {identityUser,storage,json,failure,limitedBody,requireSameOrigin,ApiError} from '@/lib/storage';
 import {findFolder} from '@/lib/folders';
 import {SURVEY_STATUSES} from '@/lib/daily-report';
 import {librarySelection,selectedFolderIds} from '@/lib/library-catalog';
+import {deletePhotoBatch,previewPhotoDeletion,removePhotoObject} from '@/lib/bulk-photo-delete';
 const update=z.object({id:z.string().min(1).max(150),revision:z.number().int().positive(),remarks:z.string().max(10000),buildingDetails:z.string().max(100),surveyStatus:z.enum(SURVEY_STATUSES)}).strict();
 export async function PATCH(request:Request){try{
   const user=await identityUser(request),owner=user.owner;const {db}=storage();
@@ -16,11 +17,14 @@ export async function PATCH(request:Request){try{
 
 const selectionSchema=z.object({ids:z.array(z.string().min(1).max(150)).min(1).max(10000)}).strict();
 export async function POST(request:Request){try{
-  const owner=await identity(request),{db}=storage();
+  const user=await identityUser(request),{owner}=user,{db}=storage();
+  const photosOnly=new URL(request.url).searchParams.get('photos')==='1';
+  if(photosOnly)requireSameOrigin(request);
   const input=await limitedBody(request,2*1024*1024);let payload:unknown;try{payload=JSON.parse(new TextDecoder().decode(input));}catch{throw new ApiError('삭제할 일정 폴더를 선택해 주세요.');}
   const scopes=z.object({ids:z.array(z.string().min(1).max(150)).max(10000).optional(),selections:z.array(z.object({region:z.string().max(300).optional(),date:z.string().optional(),folder:z.string().max(150).optional(),view:z.enum(['date','address']),path:z.array(z.string().max(600)).max(4).optional()}).strict()).max(100).optional()}).strict().safeParse(payload);
   if(!scopes.success||!((scopes.data.ids?.length||0)+(scopes.data.selections?.length||0)))throw new ApiError('삭제할 일정 폴더를 선택해 주세요. 한 번에 최대 100개 묶음 또는 10,000개 일정을 선택할 수 있습니다.');
   const resolved=new Set(scopes.data.ids||[]);for(const selection of scopes.data.selections||[]){const query=new URLSearchParams();for(const [key,value]of Object.entries(selection)){if(value!==undefined)query.set(key,key==='path'?JSON.stringify(value):String(value));}for(const id of await selectedFolderIds(db,owner,librarySelection(query)))resolved.add(id);if(resolved.size>10000)throw new ApiError('한 번에 최대 10,000개 일정을 선택해 주세요.');}const selected=[...resolved];
+  if(photosOnly)return json(await previewPhotoDeletion(db,user,selected));
   const ids=JSON.stringify(selected);
   const folders=await db.prepare('SELECT COUNT(*) AS count FROM survey_folders WHERE owner=? AND id IN (SELECT value FROM json_each(?))').bind(owner,ids).first<{count:number}>();
   if(!folders?.count)throw new ApiError('삭제할 폴더가 없습니다.',404);
@@ -30,8 +34,15 @@ export async function POST(request:Request){try{
 }catch(e){return failure(e);}}
 
 export async function DELETE(request:Request){try{
-  const user=await identityUser(request),owner=user.owner;const {db,bucket}=storage();
+  const user=await identityUser(request),owner=user.owner,resources=storage(),{db,bucket}=resources;
   const params=new URL(request.url).searchParams,id=params.get('id'),region=params.get('region'),date=params.get('date');
+  if(params.get('photos')==='1'){
+    requireSameOrigin(request);
+    let batchId:string;
+    try{batchId=z.object({batchId:z.string().uuid()}).strict().parse(JSON.parse(new TextDecoder().decode(await limitedBody(request,2000)))).batchId;}
+    catch{throw new ApiError('삭제할 사진을 다시 확인해 주세요.');}
+    return json(await deletePhotoBatch(resources,user,batchId));
+  }
   const bulk=params.get('batch')==='1';
   if(!bulk&&!id&&!region)throw new ApiError('삭제할 폴더를 선택해 주세요.');
   let where=id?'owner=? AND id=?':date?'owner=? AND region=? AND survey_date=?':'owner=? AND region=?';
@@ -51,11 +62,10 @@ export async function DELETE(request:Request){try{
   ]);
   const folderIds=continuation?.folderIds||marked![0].results.map(row=>row.id),sourceIds=continuation?.sourceIds||marked![2].results.map(row=>row.id);
   const ids=JSON.stringify(folderIds),sources=JSON.stringify(sourceIds);
-  const photoRows=await db.prepare('SELECT id,object_key,thumbnail_key FROM photos WHERE owner=? AND deleted=1 AND folder IN (SELECT value FROM json_each(?)) LIMIT 10').bind(owner,ids).all<{id:string;object_key:string;thumbnail_key?:string|null}>();
-  const sourceRows=await db.prepare('SELECT id,object_key FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?)) LIMIT ?').bind(owner,sources,10-photoRows.results.length).all<{id:string;object_key:string;thumbnail_key?:string|null}>();
-  for(const [table,rows] of [['photos',photoRows.results],['schedule_imports',sourceRows.results]] as const){
-    for(const row of rows){if(row.thumbnail_key)await bucket.delete(row.thumbnail_key);await bucket.delete(row.object_key);await db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=? AND deleted=1`).bind(owner,row.id).run();}
-  }
+  const photoRows=await db.prepare('SELECT id,object_key,thumbnail_key FROM photos WHERE owner=? AND deleted=1 AND folder IN (SELECT value FROM json_each(?)) LIMIT 10').bind(owner,ids).all<{id:string;object_key:string;thumbnail_key:string|null}>();
+  const sourceRows=await db.prepare('SELECT id,object_key FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?)) LIMIT ?').bind(owner,sources,10-photoRows.results.length).all<{id:string;object_key:string}>();
+  for(const photo of photoRows.results)await removePhotoObject(resources,owner,photo);
+  for(const source of sourceRows.results){await bucket.delete(source.object_key);await db.prepare('DELETE FROM schedule_imports WHERE owner=? AND id=? AND deleted=1').bind(owner,source.id).run();}
   const pending=await db.prepare('SELECT (SELECT COUNT(*) FROM photos WHERE owner=? AND folder IN (SELECT value FROM json_each(?))) + (SELECT COUNT(*) FROM schedule_imports WHERE owner=? AND deleted=1 AND id IN (SELECT value FROM json_each(?))) AS count').bind(owner,ids,owner,sources).first<{count:number}>();
   if(pending?.count)return json({deleted:false,continuation:{folderIds,sourceIds},remaining:pending.count});
   await db.prepare('DELETE FROM survey_folders WHERE owner=? AND deleting=1 AND id IN (SELECT value FROM json_each(?))').bind(owner,ids).run();

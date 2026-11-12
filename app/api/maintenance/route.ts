@@ -1,6 +1,7 @@
 import {failure,identity,json,requireSameOrigin,storage} from '@/lib/storage';
+import {cleanInterruptedPhotoDeletes} from '@/lib/bulk-photo-delete';
 export async function POST(request:Request){try{
- requireSameOrigin(request);const owner=await identity(request),{db,bucket}=storage(),before=Date.now()-600000;
+ requireSameOrigin(request);const owner=await identity(request),resources=storage(),{db,bucket}=resources,before=Date.now()-600000;
  const attempts=await db.prepare('SELECT object_key,upload_id FROM upload_attempts WHERE owner=? AND started_at<? ORDER BY started_at LIMIT 5').bind(owner,before).all<{object_key:string;upload_id:string}>();
  let removed=0;
  for(const item of attempts.results){
@@ -11,5 +12,6 @@ export async function POST(request:Request){try{
   if(!live){await bucket.delete(item.object_key);removed++;}
   await db.prepare('DELETE FROM upload_attempts WHERE object_key=? AND owner=?').bind(item.object_key,owner).run();
  }
- return json({removed,more:attempts.results.length===5});
+ const moreDeletes=await cleanInterruptedPhotoDeletes(resources,owner,before);
+ return json({removed,more:attempts.results.length===5||moreDeletes});
 }catch(e){return failure(e);}}

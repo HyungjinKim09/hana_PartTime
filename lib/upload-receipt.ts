@@ -8,7 +8,7 @@ export async function claimUpload(db:D1Database,owner:string,id:string,folder:st
  const receipt=await db.prepare('SELECT * FROM upload_receipts WHERE owner=? AND id=?').bind(owner,id).first<Receipt>();
  if(!receipt||receipt.folder!==folder||receipt.kind!==kind||receipt.filename!==filename||receipt.fingerprint!==fingerprint)throw new ApiError('같은 업로드 작업의 사진 내용이 달라졌습니다. 사진을 다시 선택해 주세요.',409);
  if(receipt.state==='saved'){
-  const photo=saved?await saved():await db.prepare('SELECT id,folder,kind,filename,content_type,size,created_at,created_by FROM photos WHERE owner=? AND id=? AND deleted=0').bind(owner,receipt.photo_id).first();
+  const photo=saved?await saved():await db.prepare('SELECT id,folder,kind,filename,content_type,size,created_at,created_by,version FROM photos WHERE owner=? AND id=? AND deleted=0').bind(owner,receipt.photo_id).first();
   if(!photo)throw new ApiError('이미 삭제된 사진의 업로드 작업입니다. 새로 올리려면 사진을 다시 선택해 주세요.',410);
   return {photo:attributed(photo),id:receipt.photo_id,attempt,key:''};
  }

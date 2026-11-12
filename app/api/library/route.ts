@@ -7,6 +7,7 @@ import {safeFilename} from '@/lib/zip';
 import {budgetUsage} from '@/lib/r2-budget';
 import {claimUpload} from '@/lib/upload-receipt';
 import {photoPage} from '@/lib/photo-page';
+import {removePhotoObject} from '@/lib/bulk-photo-delete';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){try{
   const owner=await identity(request);const {db}=storage(),params=new URL(request.url).searchParams,folder=params.get('folder');
@@ -74,13 +75,11 @@ export async function POST(request:Request){try{
   return response;
 }catch(e){return failure(e);}}
 export async function DELETE(request:Request){try{
-  const user=await identityUser(request),owner=user.owner;const {db,bucket}=storage();const id=new URL(request.url).searchParams.get('id');
-  const photo=await db.prepare('UPDATE photos SET deleted=1,deleted_by=COALESCE(deleted_by,?) WHERE id=? AND owner=? RETURNING object_key,thumbnail_key').bind(attribution(user),id||'',owner).first<{object_key:string;thumbnail_key:string|null}>();
+  const user=await identityUser(request),owner=user.owner;const resources=storage(),{db}=resources;const id=new URL(request.url).searchParams.get('id');
+  const photo=await db.prepare('UPDATE photos SET deleted=1,deleted_by=COALESCE(deleted_by,?) WHERE id=? AND owner=? RETURNING id,object_key,thumbnail_key').bind(attribution(user),id||'',owner).first<{id:string;object_key:string;thumbnail_key:string|null}>();
   if(!photo) throw new ApiError('사진을 찾을 수 없습니다.',404);
   // Hide metadata durably first: a failed later cleanup cannot break the gallery or ZIP.
   // A retained tombstone allows the same DELETE request to safely retry cleanup.
-  if(photo.thumbnail_key)await bucket.delete(photo.thumbnail_key);
-  await bucket.delete(photo.object_key);
-  await db.prepare('DELETE FROM photos WHERE id=? AND owner=?').bind(id,owner).run();
+  await removePhotoObject(resources,owner,photo);
   return json({deleted:true});
 }catch(e){return failure(e);}}
