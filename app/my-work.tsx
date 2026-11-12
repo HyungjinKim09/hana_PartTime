@@ -1,16 +1,79 @@
 "use client";
 import {useRef,useState} from 'react';
+import {CalendarDays,ChevronRight,Folder,FolderOpen} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {folderLabel} from '@/lib/types';
 import {toast} from 'sonner';
 type Item={id:string;region:string;date:string;lot:string;unit:string;time:string;surveyStatus:string;count:number};
 type Report={date:string;text:string;count:number;regions:number;pending:number;restored:number};
 type ReportScope={region:string;date:string};
+
+function FolderGroups({folders,expand,onSelect}:{folders:Item[];expand:boolean;onSelect:(folder:Item)=>void}){
+ const regions=new Map<string,Map<string,Item[]>>();
+ for(const folder of folders){
+  const dates=regions.get(folder.region)??new Map<string,Item[]>();
+  const items=dates.get(folder.date)??[];
+  items.push(folder);
+  dates.set(folder.date,items);
+  regions.set(folder.region,dates);
+ }
+
+ return <div className="my-work-folders">
+  {[...regions].map(([region,dates])=><details className="my-work-region" key={region} open={expand}>
+   <summary><Folder size={18} aria-hidden="true"/><strong>{region}</strong><ChevronRight size={16} className="my-work-chevron" aria-hidden="true"/></summary>
+   {[...dates].sort(([a],[b])=>b.localeCompare(a)).map(([date,items])=><details className="my-work-date" key={date} open={expand}>
+    <summary><CalendarDays size={16} aria-hidden="true"/><span>{date}</span><ChevronRight size={16} className="my-work-chevron" aria-hidden="true"/></summary>
+    <ul className="my-work-items">
+     {items.map(folder=><li key={folder.id}>
+      <button type="button" className="my-work-folder" onClick={()=>onSelect(folder)}>
+       <FolderOpen size={16} aria-hidden="true"/>
+       <span><strong>{folderLabel(folder)}</strong><small>{folder.time||'시간 미정'} · {folder.surveyStatus} · 사진 {folder.count}장</small></span>
+      </button>
+     </li>)}
+    </ul>
+   </details>)}
+  </details>)}
+ </div>;
+}
+
 export function MyWork({disabled,onFolder,reportScope}:{disabled:boolean;onFolder:(region:string,date:string,id:string)=>void;reportScope?:ReportScope}){
  const reportTitle=reportScope?`${reportScope.date} 내 일일보고`:'오늘 내 일일보고';
- const [open,setOpen]=useState<'folders'|'report'|null>(null),[folders,setFolders]=useState<Item[]>([]),[query,setQuery]=useState(''),[total,setTotal]=useState(0),[cursor,setCursor]=useState<string|null>(null),[report,setReport]=useState<Report|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');const appliedQuery=useRef('whole'),sequence=useRef(0),area=useRef<HTMLTextAreaElement>(null);
- async function load(next?:string,q=query){const seq=++sequence.current;setBusy(true);setError('');if(!next){setFolders([]);setCursor(null);}try{const response=await fetch('/api/my-work?'+new URLSearchParams({mode:'folders',limit:'50',q,...(next?{cursor:next}:{})}),{cache:'no-store'}),data=await response.json() as {folders:Item[];total:number;nextCursor:string|null;error?:string};if(!response.ok)throw Error(data.error);if(seq===sequence.current){setFolders(old=>next?[...old,...data.folders]:data.folders);appliedQuery.current=q;setTotal(data.total);setCursor(data.nextCursor);}}catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'내 폴더 조회 실패');}finally{if(seq===sequence.current)setBusy(false);}}
+ const [open,setOpen]=useState<'folders'|'report'|null>(null),[folders,setFolders]=useState<Item[]>([]),[query,setQuery]=useState(''),[appliedQuery,setAppliedQuery]=useState(''),[total,setTotal]=useState(0),[cursor,setCursor]=useState<string|null>(null),[report,setReport]=useState<Report|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const sequence=useRef(0),area=useRef<HTMLTextAreaElement>(null),folderTitle=useRef<HTMLHeadingElement>(null);
+ async function load(next?:string,q=query){const seq=++sequence.current;setBusy(true);setError('');if(!next){setFolders([]);setCursor(null);}try{const response=await fetch('/api/my-work?'+new URLSearchParams({mode:'folders',limit:'50',q,...(next?{cursor:next}:{})}),{cache:'no-store'}),data=await response.json() as {folders:Item[];total:number;nextCursor:string|null;error?:string};if(!response.ok)throw Error(data.error);if(seq===sequence.current){setFolders(old=>next?[...old,...data.folders]:data.folders);setAppliedQuery(q.trim());setTotal(data.total);setCursor(data.nextCursor);}}catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'내 폴더 조회 실패');}finally{if(seq===sequence.current)setBusy(false);}}
  async function showReport(){setOpen('report');setReport(null);setError('');setBusy(true);const seq=++sequence.current;try{const params=new URLSearchParams({mode:'report',...reportScope});const response=await fetch('/api/my-work?'+params,{cache:'no-store'}),data=await response.json() as Report&{error?:string};if(!response.ok)throw Error(data.error);if(seq===sequence.current)setReport(data);}catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'내 보고 조회 실패');}finally{if(seq===sequence.current)setBusy(false);}}
  async function copy(){if(!report?.text)return;try{await navigator.clipboard.writeText(report.text);toast.success('내 일일보고를 복사했어요.');}catch{area.current?.focus();area.current?.select();toast.info('선택된 내용을 복사해 주세요.');}}
- return <div className="personal-tools"><button className="secondary-button" disabled={disabled} onClick={()=>{setOpen('folders');setQuery('');void load(undefined,'');}}>내 조사 폴더</button><button className="secondary-button" disabled={disabled} onClick={()=>void showReport()}>{reportScope?'내 일일보고':'오늘 내 보고'}</button><Dialog open={!!open} onOpenChange={value=>{if(!value){setOpen(null);sequence.current++;}}}><DialogContent className={open==='report'?'report-dialog':'personnel-dialog'}><DialogHeader><DialogTitle>{open==='report'?reportTitle:'내 조사 폴더'}</DialogTitle><DialogDescription>{open==='report'?reportScope?`${reportScope.region}에서 해당 날짜에 내가 저장한 조사 기록입니다.`:'오늘 일정 중 내가 저장한 조사 기록을 구역별로 모았습니다.':'내가 사진을 올리거나 조사 기록을 저장한 폴더입니다. 다른 작업자도 함께 사용하는 공용 자료입니다.'}</DialogDescription></DialogHeader>{error&&<p role="alert" className="error-banner">{error}</p>}{open==='folders'?<><form className="my-work-search" onSubmit={event=>{event.preventDefault();void load();}}><label>내 폴더 검색<input value={query} maxLength={150} onChange={event=>setQuery(event.target.value)} placeholder="구역·주소·건물 이름"/></label><button className="secondary-button" disabled={busy}>검색</button></form><p>{total}개 폴더</p><div className="my-work-folders">{folders.map(folder=><button className="secondary-button" key={folder.id} onClick={()=>{setOpen(null);sequence.current++;onFolder(folder.region,folder.date,folder.id);}}><strong>{folderLabel(folder)}</strong><span>{folder.region} · {folder.date}</span><small>{folder.time||'시간 미정'} · {folder.surveyStatus} · 사진 {folder.count}장</small></button>)}</div>{!busy&&!folders.length&&!error&&<p>참여한 폴더가 없습니다.</p>}{cursor&&<button className="secondary-button" disabled={busy} onClick={()=>void load(cursor,appliedQuery.current)}>폴더 더 보기</button>}</>:report&&<><p>{report.date} · {reportScope?reportScope.region:`${report.regions}개 구역`} · 내 조사 기록 {report.count}건</p>{report.restored>0&&<p className="review-hint">백업에서 복원한 개인 기록 {report.restored}건이 포함됩니다. 내용을 확인해 주세요.</p>}{report.pending>0&&<p className="review-hint">미완료 일정 {report.pending}건이 포함됩니다.</p>}{report.count?<><textarea ref={area} className="report-text" aria-label={reportTitle+' 내용'} readOnly value={report.text}/><button className="primary-button" onClick={()=>void copy()}>내 일일보고 복사</button></>:<p>{reportScope?'이 날짜 폴더에 내가 저장한 조사 기록이 없습니다.':'오늘 일정에 내가 저장한 조사 기록이 없습니다.'}</p>}</>}{busy&&<p role="status">내 작업을 불러오는 중…</p>}</DialogContent></Dialog></div>;
+ return <div className="personal-tools">
+  <button className="secondary-button" disabled={disabled} onClick={()=>{setOpen('folders');setQuery('');void load(undefined,'');}}>내 조사 폴더</button>
+  <button className="secondary-button" disabled={disabled} onClick={()=>void showReport()}>{reportScope?'내 일일보고':'오늘 내 보고'}</button>
+  <Dialog open={!!open} onOpenChange={value=>{if(!value){setOpen(null);sequence.current++;}}}>
+   <DialogContent className={open==='report'?'report-dialog':'my-work-dialog'} onOpenAutoFocus={event=>{
+    if(open==='folders'){event.preventDefault();folderTitle.current?.focus({preventScroll:true});}
+   }}>
+    <DialogHeader>
+     {open==='report'?<DialogTitle>{reportTitle}</DialogTitle>:<DialogTitle ref={folderTitle} tabIndex={-1}>내 조사 폴더</DialogTitle>}
+     <DialogDescription>{open==='report'?reportScope?`${reportScope.region}에서 해당 날짜에 내가 저장한 조사 기록입니다.`:'오늘 일정 중 내가 저장한 조사 기록을 구역별로 모았습니다.':'내가 사진을 올리거나 조사 기록을 저장한 공용 폴더입니다.'}</DialogDescription>
+    </DialogHeader>
+    {error&&<p role="alert" className="error-banner">{error}</p>}
+    {open==='folders'?<>
+     <form className="my-work-search" onSubmit={event=>{event.preventDefault();void load();}}>
+      <label>내 폴더 검색<input type="search" value={query} maxLength={150} onChange={event=>setQuery(event.target.value)} placeholder="구역·주소·건물 이름"/></label>
+      <button className="secondary-button" disabled={busy}>검색</button>
+     </form>
+     {(folders.length>0||!busy&&!error)&&<p className="my-work-count">{total}개 폴더</p>}
+     {folders.length>0&&<FolderGroups folders={folders} expand={!!appliedQuery} onSelect={folder=>{
+      setOpen(null);sequence.current++;onFolder(folder.region,folder.date,folder.id);
+     }}/>}
+     {!busy&&!folders.length&&!error&&<p>{appliedQuery?'검색 결과가 없습니다.':'참여한 폴더가 없습니다.'}</p>}
+     {cursor&&<button className="secondary-button" disabled={busy} onClick={()=>void load(cursor,appliedQuery)}>폴더 더 보기</button>}
+    </>:report&&<>
+     <p>{report.date} · {reportScope?reportScope.region:`${report.regions}개 구역`} · 내 조사 기록 {report.count}건</p>
+     {report.restored>0&&<p className="review-hint">백업에서 복원한 개인 기록 {report.restored}건이 포함됩니다. 내용을 확인해 주세요.</p>}
+     {report.pending>0&&<p className="review-hint">미완료 일정 {report.pending}건이 포함됩니다.</p>}
+     {report.count?<><textarea ref={area} className="report-text" aria-label={reportTitle+' 내용'} readOnly value={report.text}/><button className="primary-button" onClick={()=>void copy()}>내 일일보고 복사</button></>:<p>{reportScope?'이 날짜 폴더에 내가 저장한 조사 기록이 없습니다.':'오늘 일정에 내가 저장한 조사 기록이 없습니다.'}</p>}
+    </>}
+    {busy&&<p role="status">내 작업을 불러오는 중…</p>}
+   </DialogContent>
+  </Dialog>
+ </div>;
 }
