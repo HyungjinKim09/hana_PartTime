@@ -2,7 +2,7 @@ import {recordCompletedArchive} from './completion';
 import {archiveCompletionReceipt} from '@/lib/archive-completion';
 import {addressParts,matchingAddress,withinAddress} from '@/lib/address-folders';
 import {listFolders} from '@/lib/folders';
-import {exportFolderLabel} from '@/lib/daily-report';
+import {archiveFolderPaths} from '@/lib/archive-folder-paths';
 import {ApiError,failure,identityUser,storage,json,requireSameOrigin} from '@/lib/storage';
 import {safeFilename} from '@/lib/zip';
 import {archiveParts} from '@/lib/archive-parts';
@@ -15,19 +15,11 @@ export async function POST(request:Request){try{
   const user=await identityUser(request),{db,bucket}=storage(),params=new URL(request.url).searchParams;
   if(params.get('completed')==='1')return await recordCompletedArchive(request,db,user);
   const owner=user.owner;
-  const folder=params.get('folder'),region=params.get('region'),date=params.get('date');
+  const folder=params.get('folder'),region=params.get('region'),date=params.get('date'),view=params.get('view');
   const photosOnly=params.get('photosOnly')==='1';
   const allFolders=await listFolders(db,owner);
-  const folderNames=new Map<string,string>();const used=new Set<string>();
-  // Resolve names before filtering so single-folder and full downloads agree.
-  for(const f of [...allFolders].sort((a,b)=>a.id.localeCompare(b.id))){
-    const base=safeFilename(exportFolderLabel(f));let name=base;let index=1;
-    const key=(value:string)=>`${f.date}/${value}`.toLowerCase();
-    while(used.has(key(name))){const suffix=` (${++index})`;name=base.slice(0,120-suffix.length)+suffix;}
-    used.add(key(name));folderNames.set(f.id,name);
-  }
+  const {names:folderNames,nested:datePaths}=archiveFolderPaths(allFolders,view!=='address');
   let folders=allFolders.filter(f=>(!folder||f.id===folder)&&(!region||f.region===region)&&(!date||f.date===date));
-  const view=params.get('view');
   let addressPath:string[]=[];
   if(params.has('path')){try{const value=JSON.parse(params.get('path')!);if(!Array.isArray(value)||value.length>4||!value.every(x=>typeof x==='string'&&x.length<1000))throw Error();addressPath=value;}catch{throw new ApiError('주소 경로를 확인해 주세요.');}}
   if(view==='address'&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
@@ -46,15 +38,16 @@ export async function POST(request:Request){try{
   };
   // One display name per address identity, even if road text differs by survey date.
   const canonicalNames=new Map<string,string>();
-  for(const f of allFolders){const parts=addressParts(f,view==='address');parts.forEach((part,i)=>{const key=JSON.stringify([f.region,...parts.slice(0,i+1).map(p=>p.key)]);if(part.label.length>(canonicalNames.get(key)?.length||0))canonicalNames.set(key,part.label);});}
+  if(view==='address')for(const f of allFolders){const parts=addressParts(f,true);parts.forEach((part,i)=>{const key=JSON.stringify([f.region,...parts.slice(0,i+1).map(p=>p.key)]);if(part.label.length>(canonicalNames.get(key)?.length||0))canonicalNames.set(key,part.label);});}
   const directories=new Set<string>();
   for(const f of folders){
-    const sourceParts=addressParts(f,view==='address');
-    const parts=sourceParts.map((p,i)=>safeFilename(canonicalNames.get(JSON.stringify([f.region,...sourceParts.slice(0,i+1).map(x=>x.key)]))||p.label));
-    const relative=parts.slice(folder?parts.length-1:Math.max(0,addressPath.length-1));
-    const path=view==='address'
-      ?[...(!region&&!folder?[safeFilename(f.region)]:[]),...relative].join('/')+'/'
-      :`${folder?'':f.date+'/'}${folderNames.get(f.id)}/`;
+    let path=`${folder?'':f.date+'/'}${datePaths.get(f.id)??folderNames.get(f.id)}/`;
+    if(view==='address'){
+      const sourceParts=addressParts(f,true);
+      const parts=sourceParts.map((p,i)=>safeFilename(canonicalNames.get(JSON.stringify([f.region,...sourceParts.slice(0,i+1).map(x=>x.key)]))||p.label));
+      const relative=parts.slice(folder?parts.length-1:Math.max(0,addressPath.length-1));
+      path=[...(!region&&!folder?[safeFilename(f.region)]:[]),...relative].join('/')+'/';
+    }
     if(!directories.has(path)){entries.push({name:path,size:0,url:null});directories.add(path);}
     for(const p of byFolder.get(f.id)||[])addOriginal(`${path}${p.id}_${safeFilename(p.filename)}`,p.object_key,p.size);
   }

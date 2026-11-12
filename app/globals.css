@@ -80,6 +80,15 @@
 .photo-rotation-preview[data-sideways=true] img{max-width:100cqh;max-height:100cqw}
 .photo-rotation-actions{display:flex;flex-wrap:wrap;gap:8px}
 .photo-rotation-actions button{min-height:44px;flex:1;justify-content:center}
+.photo-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.photo-toolbar .media-tabs{margin:0}
+.photo-toolbar>button{min-height:44px}
+.folder-photo-rotation-dialog{max-height:90dvh;overflow:auto}
+.folder-photo-rotation-dialog [data-slot=dialog-header]{padding-right:20px;overflow-wrap:anywhere}
+.folder-photo-rotation-dialog .photo-rotation-actions button[aria-pressed=true]{background:var(--primary);color:var(--primary-foreground)}
+.folder-rotation-progress{display:grid;gap:8px}
+.folder-rotation-failures summary{cursor:pointer}
+.folder-rotation-failures li{overflow-wrap:anywhere;font-size:14px}
 @media(max-width:480px){.photo-edit-dialog{padding:16px}.photo-rotation-actions .primary-button{flex-basis:100%}}
 .photo-meta>.photo-upload-status{display:flex;align-items:center;gap:4px;margin-top:8px;font-size:12px;font-weight:600;line-height:1.5;color:#715a22;white-space:normal;overflow-wrap:anywhere}.photo-meta>.photo-upload-status.saved{color:#187747}.photo-meta>.photo-upload-status.failed,.photo-upload-error{color:#b13b32}.photo-upload-error{font-size:12px;margin-top:6px;overflow-wrap:anywhere}.pending-photo .photo-image img{transition:none}
 

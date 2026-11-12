@@ -1,11 +1,11 @@
-import {buildingCategory} from './daily-report.ts';
+import {buildingCategory,exportFolderLabel} from './daily-report.ts';
 import type {Folder} from './types';
 import {normalizeRoadAddress} from './address.js';
 type Place=Pick<Folder,'id'|'region'|'lot'|'address'|'unit'|'unitDisplay'>;
 export type AddressPart={key:string;label:string};
 const clean=(s:string)=>s.normalize('NFKC').replace(/\s+/g,' ').trim();
 const token=(s:string)=>clean(s).replace(/\s/g,'').toLowerCase();
-export function addressParts(f:Place,categorized=false):AddressPart[]{
+function addressDetails(f:Place){
  const lot=clean(f.lot).replace(/(\d+)(?:\s*[-–−]\s*(\d+))?$/u,(_,a:string,b?:string)=>String(Number(a)).padStart(3,'0')+(b?'-'+String(Number(b)).padStart(3,'0'):''));
  const road=normalizeRoadAddress(f.address).match(/^(.*?(?:로|길)\s*\d+(?:-\d+)?)(?=\s|\(|$)/u)?.[1]||'';
  const detail=clean([f.unitDisplay||f.unit||'',f.address.replace(road,'')].join(' ')).replace(/[()]/g,' ');
@@ -14,7 +14,18 @@ export function addressParts(f:Place,categorized=false):AddressPart[]{
  const block=detail.match(/([A-Za-z]|\d+)\s*동(?=\s|\d|$)/u)?.[1];
  const identity=token(lot||road)||`unknown:${f.id}`;
  const label=(lot||road||'주소 확인 필요')+(building?`(${building})`:'')+(lot&&road?`(${road})`:'');
- const parts:AddressPart[]=[{key:JSON.stringify([identity,token(building)]),label}];
+ return {building,block,room,buildingPart:{key:JSON.stringify([identity,token(building)]),label}};
+}
+
+export function subdividedArchiveParts(f:Place){
+ const {buildingPart,block}=addressDetails(f);
+ const room=exportFolderLabel(f).normalize('NFKC').replace(/[–−]/g,'-');
+ return {building:buildingPart,unitPath:[...(block?[block.toUpperCase()+'동']:[]),room]};
+}
+
+export function addressParts(f:Place,categorized=false):AddressPart[]{
+ const {building,block,room,buildingPart}=addressDetails(f);
+ const parts:AddressPart[]=[buildingPart];
  if(/아파트|APT/iu.test(building)||!!(block&&/^\d+$/.test(block)&&!/빌라|빌|주택|맨션/iu.test(building))){
   parts.push({key:'block:'+(block||'?'),label:block?block+'동':'동 미입력'});
   parts.push({key:'room:'+(room||'?'),label:room?room+'호':'호수 미입력'});

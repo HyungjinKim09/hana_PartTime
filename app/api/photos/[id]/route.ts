@@ -1,14 +1,14 @@
 import {attributed,attribution} from '@/lib/attribution';
 import {ApiError,failure,identity,identityUser,imageType,json,limitedBody,requireSameOrigin,storage} from '@/lib/storage';
+import {photoVersionTag} from '@/lib/types';
 export const dynamic='force-dynamic';
 type Context={params:Promise<{id:string}>};
-const photoTag=(id:string,version:string)=>`"photo-${id}${version?'-'+version:''}"`;
 export async function GET(request:Request,{params}:Context){try{
   const owner=await identity();const {db,bucket}=storage();const {id}=await params;
   const row=await db.prepare('SELECT object_key,content_type,filename,version FROM photos WHERE id=? AND owner=? AND deleted=0').bind(id,owner).first<{object_key:string;content_type:string;filename:string;version:string}>();
   if(!row) throw new ApiError('사진을 찾을 수 없습니다.',404);
   const download=new URL(request.url).searchParams.has('download');
-  const etag=photoTag(id,row.version);
+  const etag=photoVersionTag(id,row.version);
   if(!download&&request.headers.get('if-none-match')===etag)return new Response(null,{status:304,headers:{'Cache-Control':'private, no-cache','ETag':etag,'Vary':'Cookie'}});
   const object=await bucket.get(row.object_key); if(!object) throw new ApiError('원본 사진을 불러올 수 없습니다.',404);
   return new Response(object.body,{headers:{'Content-Type':row.content_type,'Content-Length':String(object.size),'Cache-Control':download?'private, no-store':'private, no-cache','ETag':etag,'Vary':'Cookie','X-Content-Type-Options':'nosniff','Content-Disposition':`${download?'attachment':'inline'}; filename="photo"; filename*=UTF-8''${encodeURIComponent(row.filename)}`}});
@@ -25,7 +25,7 @@ export async function PATCH(request:Request,{params}:Context){try{
    WHERE p.id=? AND p.owner=? AND p.deleted=0`).bind(id,owner).first<{object_key:string;thumbnail_key:string|null;version:string;content_type:string;filename:string;kind:string}>();
  if(!current)throw new ApiError('사진을 찾을 수 없습니다.',404);
  const conflict=()=>new ApiError('다른 기기에서 사진이 변경됐습니다. 사진을 다시 열어 확인해 주세요.',412);
- if(expected!==photoTag(id,current.version))throw conflict();
+ if(expected!==photoVersionTag(id,current.version))throw conflict();
  if(current.kind!=='photo'||!['image/jpeg','image/png','image/webp','image/heic'].includes(current.content_type))throw new ApiError('이 형식의 사진은 회전 저장을 지원하지 않습니다.',415);
  const bytes=await limitedBody(request,20*1024*1024),type=imageType(bytes);
  const targetType=current.content_type==='image/heic'?'image/jpeg':current.content_type;
