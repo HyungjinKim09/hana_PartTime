@@ -8,3 +8,16 @@ test('preserves all rows, arbitrary time text and separate remarks',()=>{const d
 test('failed and missing tables cannot silently produce incomplete schedules',()=>{assert.throws(()=>parseClovaSchedule({images:[{inferResult:'FAILURE'}]}));const s=sample();s.images[0].tables=[];assert.throws(()=>parseClovaSchedule(s));});
 test('missing lot retained for review and merged body cells warned',()=>{const s=sample(2);s.images[0].tables[0].cells.find(c=>c.rowIndex===1&&c.columnIndex===1).cellTextLines=[];s.images[0].tables[0].cells.find(c=>c.rowIndex===1&&c.columnIndex===2).rowSpan=2;const d=parseClovaSchedule(s);assert.equal(d.folders.length,2);assert.equal(d.folders[0].lot,'');assert.ok(d.warnings.length>1);});
 test('only fixed Naver HTTPS endpoint, secret and capped limit accepted',()=>{assert.equal(clovaConfig({}),null);assert.throws(()=>clovaConfig({CLOVA_OCR_URL:'https://evil.test',CLOVA_OCR_SECRET:'secret'}));assert.throws(()=>clovaConfig({CLOVA_OCR_URL:'https://ocr.apigw.ntruss.com/general',CLOVA_OCR_SECRET:'secret',CLOVA_OCR_MONTHLY_LIMIT:'101'}));assert.equal(clovaConfig({CLOVA_OCR_URL:'https://ocr.apigw.ntruss.com/general',CLOVA_OCR_SECRET:'secret'}).limit,100);assert.equal(ocrMonth(new Date('2026-09-30T15:00:00Z')),'2026-10');});
+
+test('keeps note fragments inside the numbered schedule and skips a team heading',()=>{
+ const data=sample(2),cells=data.images[0].tables[0].cells;
+ for(const c of cells){
+  if(c.rowIndex===2)c.rowIndex=5;
+  else if(c.rowIndex===1){c.rowIndex=2;if(c.columnIndex<=5)c.rowSpan=3;}
+ }
+ cells.push(cell(1,0,'B팀',{columnSpan:7}),cell(3,6,'긴 메모 둘째 줄'),cell(4,6,'다음 일정과 섞이지 않는 메모'));
+ const draft=parseClovaSchedule(data);
+ assert.deepEqual(draft.folders.map(row=>row.sourceNumber),[1,2]);
+ assert.equal(draft.folders[0].notes,'방문 전 연락\n긴 메모 둘째 줄\n다음 일정과 섞이지 않는 메모');
+ assert.equal(draft.folders[1].notes,'방문 전 연락');
+});

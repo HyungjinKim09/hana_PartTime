@@ -1,6 +1,7 @@
 import type {Worker,ImageLike} from 'tesseract.js';
 import type {ScheduleDraft} from './types';
 import {normalizeRoadAddress} from './address.js';
+import {readScheduleNumber} from './schedule-pages.ts';
 export type MixedCellReader=(data:Pick<import('tesseract.js').Page,'text'|'blocks'>,image:ImageLike,kind:'name'|'address')=>Promise<{text:string;changed:boolean}>;
 export type Rect={left:number;top:number;width:number;height:number};
 export type ScanImage={width:number;height:number;pixels:Uint8Array|Uint8ClampedArray;crop:(r:Rect)=>Promise<ImageLike>};
@@ -45,7 +46,14 @@ export function tableLines(image:ScanImage){
   const cols=merge(xs);if(cols.length<5)return null;
   // This is the numbered survey table layout: narrow number column, then lot.
   if(cols[1]-cols[0]>(cols[2]-cols[1])*.9)return null;
-  return {rows,cols};
+  // A separator must cross the number and lot columns. A long line inside
+  // a wide notes cell is not the bottom of a schedule row.
+  const fullRows=rows.filter(y=>{
+    let covered=0;
+    for(let x=cols[0]+1;x<cols[2];x++)if(dark(x,y)||dark(x,Math.max(0,y-1))||dark(x,Math.min(h-1,y+1)))covered++;
+    return covered>=(cols[2]-cols[0]-1)*.8;
+  });
+  return fullRows.length>=3?{rows:fullRows,cols}:null;
 }
 export function readLotCell(text:string,region=''){
   const joined=text.normalize('NFKC').replace(/[–—−_]/g,'-').replace(/([가-힣])\s+(?=[가-힣])/g,'$1');
@@ -64,7 +72,21 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
   const allSpans=rows.slice(1,-1).map((top,i)=>({top,bottom:rows[i+2]}));
   const heights=allSpans.map(r=>r.bottom-r.top).sort((a,b)=>a-b);
   const minimum=Math.max(12,heights[Math.floor(heights.length/2)]*.35);
-  const spans=allSpans.filter(r=>r.bottom-r.top>=minimum);
+  const spans=allSpans.filter(({top,bottom})=>{
+    if(bottom-top<minimum)return false;
+    if(!image.pixels)return true;
+    // Section labels such as B팀 span the table and have no identity dividers.
+    return cols.slice(1,4).some(column=>{
+      let ink=0;
+      for(let y=top+5;y<bottom-5;y++){
+        for(let x=column-2;x<=column+2;x++){
+          const i=(y*image.width+x)*4;
+          if(image.pixels[i]<110&&image.pixels[i+1]<110&&image.pixels[i+2]<110){ink++;break;}
+        }
+      }
+      return ink>(bottom-top-10)*.5;
+    });
+  });
   if(spans.length>100)throw new Error('일정이 100개를 넘습니다. 사진을 나눠 등록해 주세요.');
   await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
   for(let i=0;i<spans.length;i++){
@@ -110,9 +132,10 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
     const time=(await cell(4)).replace(/\s+/g,'').replace(/[〜～]/g,'~');
     const address=normalizeRoadAddress(await cell(5));
     const notes=(await cell(6)).split(/\r?\n/).map(line=>line.replace(/[ \t]+/g,' ').trim()).filter(Boolean).join('\n');
+    const sourceNumber=readScheduleNumber(await cell(0));
     const unit=/\d\s*호/.test(address)?address.replace(/\s+/g,''):'';
     if(/[A-Za-z]/.test(address)&&unit)warnings.push(`일정 ${i+1}: 영문이 섞인 건물·동 이름을 원본과 확인해 주세요. (${address})`);
-    folders.push({lot,unit,time,name,phones,address,notes,group:1});
+    folders.push({lot,unit,time,name,phones,address,notes,group:1,sourceNumber});
     onProgress(25+(i+1)/spans.length*70);
   }
   const repeated=new Set(folders.filter((f,i)=>folders.some((other,j)=>i!==j&&other.lot===f.lot)).map(f=>f.lot));

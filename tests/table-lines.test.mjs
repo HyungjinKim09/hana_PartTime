@@ -31,6 +31,12 @@ test('keeps all boundaries in an ordinary multi-row schedule',()=>{
   assert.deepEqual(lines,{rows:[150,205,286,367,448],cols:[20,48,110,176,285,342,446,620]});
 });
 
+test('ignores a long stroke confined to the notes side of a tall schedule row',()=>{
+  const page=ruledPage([150,205,510,580]);
+  for(let x=300;x<=620;x++)page.pixels.fill(0,(330*page.width+x)*4,(330*page.width+x)*4+3);
+  assert.deepEqual(tableLines(page)?.rows,[150,205,510,580]);
+});
+
 test('rejects a header without data, a blank page, and a grid without a narrow number column',()=>{
   assert.equal(tableLines(ruledPage([150,205])),null);
   assert.equal(tableLines({width:640,height:900,pixels:new Uint8Array(640*900*4).fill(255)}),null);
