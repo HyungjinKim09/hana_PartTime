@@ -1,7 +1,7 @@
 import type {Worker,ImageLike} from 'tesseract.js';
 import type {ScheduleDraft} from './types';
 import {normalizeRoadAddress} from './address.js';
-import {readScheduleNumber} from './schedule-pages.ts';
+import {assignScheduleTeams,readScheduleNumber} from './schedule-pages.ts';
 export type MixedCellReader=(data:Pick<import('tesseract.js').Page,'text'|'blocks'>,image:ImageLike,kind:'name'|'address')=>Promise<{text:string;changed:boolean}>;
 export type Rect={left:number;top:number;width:number;height:number};
 export type ScanImage={width:number;height:number;pixels:Uint8Array|Uint8ClampedArray;crop:(r:Rect)=>Promise<ImageLike>};
@@ -72,11 +72,9 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
   const allSpans=rows.slice(1,-1).map((top,i)=>({top,bottom:rows[i+2]}));
   const heights=allSpans.map(r=>r.bottom-r.top).sort((a,b)=>a-b);
   const minimum=Math.max(12,heights[Math.floor(heights.length/2)]*.35);
-  const spans=allSpans.filter(({top,bottom})=>{
-    if(bottom-top<minimum)return false;
-    if(!image.pixels)return true;
-    // Section labels such as B팀 span the table and have no identity dividers.
-    return cols.slice(1,4).some(column=>{
+  const spans=allSpans.map(({top,bottom})=>{
+    if(!image.pixels)return {top,bottom,visit:bottom-top>=minimum,teamBand:false};
+    const divided=cols.slice(1,4).some(column=>{
       let ink=0;
       for(let y=top+5;y<bottom-5;y++){
         for(let x=column-2;x<=column+2;x++){
@@ -86,11 +84,28 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
       }
       return ink>(bottom-top-10)*.5;
     });
+    const y=Math.floor((top+bottom)/2),left=cols[0],right=cols.at(-1)!;
+    let blue=0;
+    for(let x=left+5;x<right-5;x+=4){
+      const i=(y*image.width+x)*4;
+      if(image.pixels[i+2]-image.pixels[i]>12&&image.pixels[i+1]-image.pixels[i]>5)blue++;
+    }
+    return {top,bottom,visit:divided&&bottom-top>=minimum,teamBand:!divided&&blue>(right-left)*.16};
   });
-  if(spans.length>100)throw new Error('일정이 100개를 넘습니다. 사진을 나눠 등록해 주세요.');
+  const total=spans.filter(span=>span.visit).length;
+  if(total>100)throw new Error('일정이 100개를 넘습니다. 사진을 나눠 등록해 주세요.');
   await worker.setParameters({tessedit_pageseg_mode:'6' as import('tesseract.js').PSM,user_defined_dpi:'150'});
-  for(let i=0;i<spans.length;i++){
-    const {top,bottom}=spans[i];
+  const dividers=new Map<number,string>();
+  for(const {top,bottom,visit,teamBand} of spans){
+    if(!visit){
+      if(teamBand&&bottom-top>12){
+        const left=cols[0]+5,width=Math.min(cols.at(-1)!-left-5,(cols[2]-left)*2);
+        const label=await image.crop({left,top:top+4,width,height:bottom-top-8});
+        dividers.set(folders.length,(await worker.recognize(label)).data.text);
+      }
+      continue;
+    }
+    const i=folders.length;
     async function cell(column:number){
       if(column+1>=cols.length)return '';
       const crop=await image.crop({left:cols[column]+5,top:top+5,width:cols[column+1]-cols[column]-10,height:bottom-top-10});
@@ -136,8 +151,9 @@ export async function readTableRows(worker:Worker,image:ScanImage,lines:NonNulla
     const unit=/\d\s*호/.test(address)?address.replace(/\s+/g,''):'';
     if(/[A-Za-z]/.test(address)&&unit)warnings.push(`일정 ${i+1}: 영문이 섞인 건물·동 이름을 원본과 확인해 주세요. (${address})`);
     folders.push({lot,unit,time,name,phones,address,notes,group:1,sourceNumber});
-    onProgress(25+(i+1)/spans.length*70);
+    onProgress(25+(i+1)/total*70);
   }
+  assignScheduleTeams(folders,dividers);
   const repeated=new Set(folders.filter((f,i)=>folders.some((other,j)=>i!==j&&other.lot===f.lot)).map(f=>f.lot));
   for(let i=0;i<folders.length;i++)if(repeated.has(folders[i].lot)&&!folders[i].unit)warnings.push(`일정 ${i+1}: 같은 번지가 여러 번 나옵니다. 건물·호수를 입력해 구분해 주세요.`);
   return {folders,warnings};

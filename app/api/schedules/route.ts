@@ -52,10 +52,18 @@ export async function POST(request:Request){
     await ensureLegacyFolders(db,owner);
     const createdAt=new Date().toISOString();
     const unique=draft.folders;
+    const teamSchedule=!manual&&new Set(unique.map(folder=>folder.group)).size>1;
     let added=0;
     try{
       for(const {key,type,file} of sources)await bucket.put(key,new Uint8Array(await file.arrayBuffer()),{httpMetadata:{contentType:type}});
-      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning,manual_added,unit_display,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING RETURNING id').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0,manual?1:0,manual?String((input as {folders:{unit?:string}[]}).folders[index]?.unit||'').normalize('NFC').trim().replace(/\s+/g,' '):f.unit,stamp));
+      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning,manual_added,unit_display,created_by,schedule_team) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING RETURNING id').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0,manual?1:0,manual?String((input as {folders:{unit?:string}[]}).folders[index]?.unit||'').normalize('NFC').trim().replace(/\s+/g,' '):f.unit,stamp,teamSchedule?f.group:null));
+      if(teamSchedule){
+        const rows=JSON.stringify(unique.map(({lot,unit,group},index)=>({lot,unit,group,index})));
+        statements.push(db.prepare(`UPDATE survey_folders AS f SET schedule_team=json_extract(row.value,'$.group'),
+          group_index=json_extract(row.value,'$.group'),sort_index=json_extract(row.value,'$.index')
+          FROM json_each(?) row WHERE f.owner=? AND f.region=? AND f.survey_date=? AND f.deleting=0 AND f.manual_added=0
+          AND f.lot=json_extract(row.value,'$.lot') AND f.unit=json_extract(row.value,'$.unit')`).bind(rows,owner,draft.region,draft.date));
+      }
       if(sources.length){
         const serialized=JSON.stringify(draft);
         for(const {id,key,type,file} of sources)statements.push(db.prepare('INSERT INTO schedule_imports (id,owner,filename,object_key,content_type,size,draft,region,survey_date,created_at,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)').bind(id,owner,safeFilename(file.name),key,type,file.size,serialized,draft.region,draft.date,createdAt,stamp));

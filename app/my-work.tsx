@@ -3,9 +3,10 @@ import {useRef,useState} from 'react';
 import {CalendarDays,ChevronRight,Folder,FolderOpen} from 'lucide-react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {folderLabel} from '@/lib/types';
-import {toast} from 'sonner';
+import {ReportSections} from './report-sections';
+import type {DailyReportSection} from '@/lib/daily-report';
 type Item={id:string;region:string;date:string;lot:string;unit:string;time:string;surveyStatus:string;count:number};
-type Report={date:string;text:string;count:number;regions:number;pending:number;restored:number};
+type Report={date:string;text:string;count:number;regions:number;pending:number;restored:number;sections?:DailyReportSection[]};
 type ReportScope={region:string;date:string};
 
 function FolderGroups({folders,expand,onSelect}:{folders:Item[];expand:boolean;onSelect:(folder:Item)=>void}){
@@ -39,10 +40,10 @@ function FolderGroups({folders,expand,onSelect}:{folders:Item[];expand:boolean;o
 export function MyWork({disabled,onFolder,reportScope}:{disabled:boolean;onFolder:(region:string,date:string,id:string)=>void;reportScope?:ReportScope}){
  const reportTitle=reportScope?`${reportScope.date} 내 일일보고`:'오늘 내 일일보고';
  const [open,setOpen]=useState<'folders'|'report'|null>(null),[folders,setFolders]=useState<Item[]>([]),[query,setQuery]=useState(''),[appliedQuery,setAppliedQuery]=useState(''),[total,setTotal]=useState(0),[cursor,setCursor]=useState<string|null>(null),[report,setReport]=useState<Report|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const sequence=useRef(0),area=useRef<HTMLTextAreaElement>(null),folderTitle=useRef<HTMLHeadingElement>(null);
+ const sequence=useRef(0),folderTitle=useRef<HTMLHeadingElement>(null);
  async function load(next?:string,q=query){const seq=++sequence.current;setBusy(true);setError('');if(!next){setFolders([]);setCursor(null);}try{const response=await fetch('/api/my-work?'+new URLSearchParams({mode:'folders',limit:'50',q,...(next?{cursor:next}:{})}),{cache:'no-store'}),data=await response.json() as {folders:Item[];total:number;nextCursor:string|null;error?:string};if(!response.ok)throw Error(data.error);if(seq===sequence.current){setFolders(old=>next?[...old,...data.folders]:data.folders);setAppliedQuery(q.trim());setTotal(data.total);setCursor(data.nextCursor);}}catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'내 폴더 조회 실패');}finally{if(seq===sequence.current)setBusy(false);}}
  async function showReport(){setOpen('report');setReport(null);setError('');setBusy(true);const seq=++sequence.current;try{const params=new URLSearchParams({mode:'report',...reportScope});const response=await fetch('/api/my-work?'+params,{cache:'no-store'}),data=await response.json() as Report&{error?:string};if(!response.ok)throw Error(data.error);if(seq===sequence.current)setReport(data);}catch(e){if(seq===sequence.current)setError(e instanceof Error?e.message:'내 보고 조회 실패');}finally{if(seq===sequence.current)setBusy(false);}}
- async function copy(){if(!report?.text)return;try{await navigator.clipboard.writeText(report.text);toast.success('내 일일보고를 복사했어요.');}catch{area.current?.focus();area.current?.select();toast.info('선택된 내용을 복사해 주세요.');}}
+
  return <div className="personal-tools">
   <button className="secondary-button" disabled={disabled} onClick={()=>{setOpen('folders');setQuery('');void load(undefined,'');}}>내 조사 폴더</button>
   <button className="secondary-button" disabled={disabled} onClick={()=>void showReport()}>{reportScope?'내 일일보고':'오늘 내 보고'}</button>
@@ -70,7 +71,7 @@ export function MyWork({disabled,onFolder,reportScope}:{disabled:boolean;onFolde
      <p>{report.date} · {reportScope?reportScope.region:`${report.regions}개 구역`} · 내 조사 기록 {report.count}건</p>
      {report.restored>0&&<p className="review-hint">백업에서 복원한 개인 기록 {report.restored}건이 포함됩니다. 내용을 확인해 주세요.</p>}
      {report.pending>0&&<p className="review-hint">미완료 일정 {report.pending}건이 포함됩니다.</p>}
-     {report.count?<><textarea ref={area} className="report-text" aria-label={reportTitle+' 내용'} readOnly value={report.text}/><button className="primary-button" onClick={()=>void copy()}>내 일일보고 복사</button></>:<p>{reportScope?'이 날짜 폴더에 내가 저장한 조사 기록이 없습니다.':'오늘 일정에 내가 저장한 조사 기록이 없습니다.'}</p>}
+     {report.count?<ReportSections personal title={reportTitle} text={report.text} sections={report.sections}/>:<p>{reportScope?'이 날짜 폴더에 내가 저장한 조사 기록이 없습니다.':'오늘 일정에 내가 저장한 조사 기록이 없습니다.'}</p>}
     </>}
     {busy&&<p role="status">내 작업을 불러오는 중…</p>}
    </DialogContent>

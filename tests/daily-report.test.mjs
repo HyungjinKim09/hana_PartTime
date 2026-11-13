@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {dailyReport,buildingCategory,exportFolderLabel,SURVEY_STATUSES,surveyStatus} from '../lib/daily-report.ts';
 const base={id:'a',region:'망미5구역',date:'2026-09-17',lot:'망미동 937-224',address:'톳고개로 68-5',notes:'방문 전 연락 요망',group:1,time:'10:00',name:'',phones:[],count:0,bytes:0};
+test('personal report retains the team title and the schedule ordinal for one completed visit',()=>{
+ const folder={...base,region:'사직4구역',date:'2026-10-23',team:1,lot:'망미동 457-5',address:'망미배산로36번길 114',surveyStatus:'완료',buildingDetails:'1동 2층'};
+ assert.equal(dailyReport(folder.region,folder.date,[folder],new Map([[folder.id,3]])),
+  '10/23(금) 사직4구역 A팀 현장조사 일일보고\n\n3.망미동 457-005(망미배산로36번길 114) - 완료/1동 2층/특이사항 없음\n\n이상입니다.');
+});
+test('public reports number each team and building type independently and leave legacy groups unlabelled',()=>{
+ const rows=[{...base,team:1},{...base,id:'b',team:1,unit:'빌라 101호'},{...base,id:'c',team:2},{...base,id:'d',team:2,unit:'빌라 102호'}];
+ const text=dailyReport(base.region,base.date,rows);
+ assert.match(text,/A팀 현장조사 일일보고[\s\S]*이상입니다\.\n\n9\/17\(목\) 망미5구역 B팀 현장조사 일일보고/);
+ assert.deepEqual([...text.matchAll(/^(\d+)\./gm)].map(match=>match[1]),['1','1','1','1']);
+ assert.doesNotMatch(dailyReport(base.region,base.date,[base,{...base,id:'legacy',group:2}]),/[AB]팀/);
+});
 test('download names use lot addresses for general buildings and only unit numbers for apartments',()=>{
  assert.equal(exportFolderLabel(base),'망미동 937-224(톳고개로 68-5)');
  assert.equal(exportFolderLabel({...base,unit:'배산301호'}),'301호');

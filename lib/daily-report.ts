@@ -14,9 +14,22 @@ export function exportFolderLabel(f:Pick<Folder,'unit'|'address'|'lot'>){
   return (f.unit?.match(unitNumber)?.[0]||f.address.match(unitNumber)?.[0])?.replace(/\s/g,'')||f.lot.trim();
 }
 export function dailyReport(region:string,date:string,folders:Folder[],scheduleNumbers?:ReadonlyMap<string,number>){
+  return dailyReportSections(region,date,folders,scheduleNumbers).map(section=>section.text).join('\n\n');
+}
+
+export type DailyReportSection={region:string;team:number;text:string;count:number};
+export function dailyReportSections(region:string,date:string,folders:Folder[],scheduleNumbers?:ReadonlyMap<string,number>):DailyReportSection[]{
   const day=new Date(date+'T00:00:00Z');if(Number.isNaN(day.getTime())||day.toISOString().slice(0,10)!==date)throw new Error('조사 날짜를 확인해 주세요.');
   const items=folders.filter(f=>f.region===region&&f.date===date);
-  const lines=[`${day.getUTCMonth()+1}/${day.getUTCDate()}(${'일월화수목금토'[day.getUTCDay()]}) ${region} 현장조사 일일보고`,''];
+  const title=`${day.getUTCMonth()+1}/${day.getUTCDate()}(${'일월화수목금토'[day.getUTCDay()]}) ${region}`;
+  const teams=Map.groupBy(items,folder=>folder.team??0);
+  if(!teams.size)teams.set(0,[]);
+  return [...teams].sort(([a],[b])=>(a||21)-(b||21)).map(([team,rows])=>({region,team,count:rows.length,
+    text:reportSection(`${title}${team?' '+String.fromCharCode(64+team)+'팀':''} 현장조사 일일보고`,rows,scheduleNumbers)}));
+}
+
+function reportSection(title:string,items:Folder[],scheduleNumbers?:ReadonlyMap<string,number>){
+  const lines=[title,''];
   const scheduled=items.filter(f=>!f.manualAdded);
   const groups=(['일반건물','구분건물'] as const).map(category=>({category,rows:scheduled.filter(f=>buildingCategory(f)===category)})).filter(g=>g.rows.length>0);
   function writeRow(f:Folder,number:number,category:string){

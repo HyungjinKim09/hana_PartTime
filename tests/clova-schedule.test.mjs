@@ -20,4 +20,23 @@ test('keeps note fragments inside the numbered schedule and skips a team heading
  assert.deepEqual(draft.folders.map(row=>row.sourceNumber),[1,2]);
  assert.equal(draft.folders[0].notes,'방문 전 연락\n긴 메모 둘째 줄\n다음 일정과 섞이지 않는 메모');
  assert.equal(draft.folders[1].notes,'방문 전 연락');
+ assert.deepEqual(draft.folders.map(row=>row.group),[2,2]);
+});
+
+test('a blank full-width merged row splits teams without becoming an appointment',()=>{
+ const data=sample(3),cells=data.images[0].tables[0].cells;
+ for(const c of cells){if(c.rowIndex===3){c.rowIndex=4;if(c.columnIndex===0)c.cellTextLines=[{cellWords:[{inferText:'1'}]}];}}
+ cells.push(cell(3,0,'',{columnSpan:7}));
+ const draft=parseClovaSchedule(data);
+ assert.deepEqual(draft.folders.map(row=>[row.group,row.sourceNumber]),[[1,1],[1,2],[2,1]]);
+});
+
+test('blue or labelled building sections do not split teams even when the printed number restarts',()=>{
+ for(const heading of ['', '구분건물']){
+  const data=sample(2),cells=data.images[0].tables[0].cells;
+  cells.find(c=>c.rowIndex===1&&c.columnIndex===5).cellTextLines=[{cellWords:[{inferText:'여고로 117'}]}];
+  for(const c of cells.filter(c=>c.rowIndex===2)){c.rowIndex=3;if(c.columnIndex===0)c.cellTextLines=[{cellWords:[{inferText:'1'}]}];}
+  cells.push(cell(2,0,heading,{columnSpan:7}));
+  assert.deepEqual(parseClovaSchedule(data).folders.map(row=>row.group),[1,1]);
+ }
 });

@@ -1,10 +1,10 @@
 import {identityUser,storage,json,failure,ApiError} from '@/lib/storage';
 import {normalizeRoadAddress} from '@/lib/address';
-import {buildingCategory,dailyReport} from '@/lib/daily-report';
+import {buildingCategory,dailyReportSections} from '@/lib/daily-report';
 import {folderView,type FolderRow} from '@/lib/folders';
 
 type PersonalReportRow=FolderRow&{personal_remarks:string;personal_details:string;personal_status:string;personal_restored:number};
-type ScheduleOrderRow=Pick<FolderRow,'id'|'region'|'unit'|'address'>;
+type ScheduleOrderRow=Pick<FolderRow,'id'|'region'|'unit'|'address'|'schedule_team'>;
 
 export async function GET(request:Request){try{
  const user=await identityUser(request),{db}=storage(),params=new URL(request.url).searchParams,actor=user.memberId||'admin';
@@ -35,7 +35,7 @@ export async function GET(request:Request){try{
       JOIN survey_folders f ON f.owner=r.owner AND f.id=r.folder_id
       WHERE r.owner=?1 AND r.actor_id=?2 AND f.survey_date=?3 AND f.deleting=0 AND f.manual_added=0 ${regionFilter}
     )
-    SELECT f.id,f.region,f.unit,f.address FROM regions r CROSS JOIN survey_folders f
+    SELECT f.id,f.region,f.unit,f.address,f.schedule_team FROM regions r CROSS JOIN survey_folders f
     WHERE f.owner=?1 AND f.region=r.region AND f.survey_date=?3 AND f.deleting=0 AND f.manual_added=0
     ORDER BY f.region,COALESCE(json_extract(f.created_by,'$.at'),''),f.sort_index,f.group_index,f.lot,f.id`)
       .bind(...reportBindings),
@@ -46,13 +46,14 @@ export async function GET(request:Request){try{
   const personalIds=new Set(rows.map(row=>row.id));
   for(const row of scheduled.results){
     const category=buildingCategory({unit:row.unit,address:normalizeRoadAddress(row.address)});
-    const key=JSON.stringify([row.region,category]);
+    const key=JSON.stringify([row.region,row.schedule_team??0,category]);
     const number=(counts.get(key)??0)+1;
     counts.set(key,number);
     if(personalIds.has(row.id))numbers.set(row.id,number);
   }
   const folders=rows.map(row=>folderView({...row,remarks:row.personal_remarks,building_details:row.personal_details,survey_status:row.personal_status})),regions=[...new Set(folders.map(f=>f.region))];
-  return json({date,count:folders.length,regions:regions.length,text:regions.map(region=>dailyReport(region,date,folders,numbers)).join('\n\n'),pending:folders.filter(f=>f.surveyStatus==='미완료').length,restored:rows.filter(r=>r.personal_restored).length});
+  const sections=regions.flatMap(region=>dailyReportSections(region,date,folders,numbers));
+  return json({date,count:folders.length,regions:regions.length,sections,text:sections.map(section=>section.text).join('\n\n'),pending:folders.filter(f=>f.surveyStatus==='미완료').length,restored:rows.filter(r=>r.personal_restored).length});
  }
  if(mode!=='folders')throw new ApiError('내 작업 조회 조건을 확인해 주세요.');
  const limit=Number(params.get('limit')||50),q=(params.get('q')||'').trim();if(!Number.isInteger(limit)||limit<1||limit>100||q.length>150)throw new ApiError('폴더 조회 범위를 확인해 주세요.');

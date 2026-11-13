@@ -36,7 +36,7 @@ export const surveyFolders=sqliteTable('survey_folders',{assignedParticipants:te
   manualAdded:integer('manual_added').notNull().default(0),unitDisplay:text('unit_display').notNull().default(''),deleting:integer('deleting').notNull().default(0),owner:text('owner').notNull(),id:text('id').notNull(),region:text('region').notNull(),date:text('survey_date').notNull(),lot:text('lot').notNull(),unit:text('unit').notNull().default(''),
   time:text('time').notNull(),name:text('name').notNull(),phones:text('phones').notNull(),address:text('address').notNull(),notes:text('notes').notNull(),
   remarks:text('remarks').notNull().default(''),buildingDetails:text('building_details').notNull().default(''),surveyStatus:text('survey_status').notNull().default('미완료'),
-  group:integer('group_index').notNull(),sort:integer('sort_index').notNull(),warning:integer('warning').notNull().default(0),
+  group:integer('group_index').notNull(),team:integer('schedule_team'),sort:integer('sort_index').notNull(),warning:integer('warning').notNull().default(0),
 },t=>[primaryKey({columns:[t.owner,t.id]}),uniqueIndex('survey_folders_owner_day_lot_unit').on(t.owner,t.region,t.date,t.lot,t.unit)]);
 export const scheduleImports=sqliteTable('schedule_imports',{createdBy:text('created_by'),restored:integer('restored').notNull().default(0),
   deleted:integer('deleted').notNull().default(0),

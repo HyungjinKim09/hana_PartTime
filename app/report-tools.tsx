@@ -1,10 +1,11 @@
 "use client";
 import {useEffect,useRef,useState} from 'react';
-import {ClipboardCopy,FileText,Save} from 'lucide-react';
+import {FileText,Save} from 'lucide-react';
 import {toast} from 'sonner';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import type {Folder} from '@/lib/types';
-import {buildingCategory,SURVEY_STATUSES,surveyStatus} from '@/lib/daily-report';
+import {buildingCategory,SURVEY_STATUSES,surveyStatus,type DailyReportSection} from '@/lib/daily-report';
+import {ReportSections} from './report-sections';
 
 export function FolderRemarks({folder,onDirty,onSaved}:{folder:Folder;onDirty:(dirty:boolean)=>void;onSaved:()=>Promise<void>}){
   const incoming=JSON.stringify({remarks:folder.remarks||'',buildingDetails:folder.buildingDetails||'',surveyStatus:surveyStatus(folder.surveyStatus)});
@@ -19,8 +20,8 @@ export function FolderRemarks({folder,onDirty,onSaved}:{folder:Folder;onDirty:(d
 
 export function DailyReportButton({region,date,disabled}:{region:string;date:string;disabled:boolean}){
   const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[text,setText]=useState(''),[error,setError]=useState(''),[pending,setPending]=useState(0);
-  const area=useRef<HTMLTextAreaElement>(null);
-  async function show(){setOpen(true);setBusy(true);setText('');setError('');try{const r=await fetch('/api/report?'+new URLSearchParams({region,date}),{cache:'no-store'});const result=await r.json() as {text:string;pending:number;error?:string};if(!r.ok)throw new Error(result.error||'보고서를 만들지 못했습니다.');setText(result.text);setPending(result.pending);}catch(e){setError(e instanceof Error?e.message:'보고서를 만들지 못했습니다.');}finally{setBusy(false);}}
-  async function copy(){try{await navigator.clipboard.writeText(text);toast.success('일일보고를 복사했어요.');}catch{area.current?.focus();area.current?.select();toast.info('보고서 내용을 선택했어요. 복사해서 사용해 주세요.');}}
-  return <><button className="secondary-button" disabled={disabled} onClick={()=>void show()}><FileText size={18}/>일일보고 만들기</button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="report-dialog"><DialogHeader><DialogTitle>{date} 일일보고</DialogTitle><DialogDescription>일반건물과 구분건물로 나누어 작성합니다. 호수·주소와 비고를 확인한 뒤 복사해 주세요.</DialogDescription></DialogHeader>{busy?<p role="status">저장된 비고로 일일보고를 작성하고 있어요.</p>:error?<p role="alert" className="error-banner">{error}</p>:<>{pending>0&&<p className="review-hint">조사 상태가 ‘미완료’인 일정이 {pending}개 있습니다. 보고서에도 미완료로 표시됩니다.</p>}<textarea ref={area} readOnly aria-label="일일보고 내용" className="report-text" value={text}/><div className="report-actions"><button className="primary-button" onClick={()=>void copy()}><ClipboardCopy size={17}/>일일보고 복사</button></div></>}</DialogContent></Dialog></>;
+  const [sections,setSections]=useState<DailyReportSection[]>([]);
+  async function show(){setOpen(true);setBusy(true);setText('');setError('');try{const r=await fetch('/api/report?'+new URLSearchParams({region,date}),{cache:'no-store'});const result=await r.json() as {text:string;sections?:DailyReportSection[];pending:number;error?:string};if(!r.ok)throw new Error(result.error||'보고서를 만들지 못했습니다.');setText(result.text);setSections(result.sections??[]);setPending(result.pending);}catch(e){setError(e instanceof Error?e.message:'보고서를 만들지 못했습니다.');}finally{setBusy(false);}}
+
+  return <><button className="secondary-button" disabled={disabled} onClick={()=>void show()}><FileText size={18}/>일일보고 만들기</button><Dialog open={open} onOpenChange={setOpen}><DialogContent className="report-dialog"><DialogHeader><DialogTitle>{date} 일일보고</DialogTitle><DialogDescription>일반건물과 구분건물로 나누어 작성합니다. 호수·주소와 비고를 확인한 뒤 복사해 주세요.</DialogDescription></DialogHeader>{busy?<p role="status">저장된 비고로 일일보고를 작성하고 있어요.</p>:error?<p role="alert" className="error-banner">{error}</p>:<>{pending>0&&<p className="review-hint">조사 상태가 ‘미완료’인 일정이 {pending}개 있습니다. 보고서에도 미완료로 표시됩니다.</p>}<ReportSections title="일일보고" text={text} sections={sections}/></>}</DialogContent></Dialog></>;
 }

@@ -89,6 +89,10 @@
 .folder-rotation-progress{display:grid;gap:8px}
 .folder-rotation-failures summary{cursor:pointer}
 .folder-rotation-failures li{overflow-wrap:anywhere;font-size:14px}
+.schedule-team-review h4{margin:16px 0 8px;font-size:14px;font-weight:700}
+.schedule-team-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.schedule-team-filters button{min-height:44px}
+.schedule-team-review select{display:block;margin-top:5px;min-height:44px;border:1px solid var(--border);border-radius:6px;padding:6px 10px;background:var(--card);color:var(--foreground);font-size:16px}
 @media(max-width:480px){.photo-edit-dialog{padding:16px}.photo-rotation-actions .primary-button{flex-basis:100%}}
 .photo-meta>.photo-upload-status{display:flex;align-items:center;gap:4px;margin-top:8px;font-size:12px;font-weight:600;line-height:1.5;color:#715a22;white-space:normal;overflow-wrap:anywhere}.photo-meta>.photo-upload-status.saved{color:#187747}.photo-meta>.photo-upload-status.failed,.photo-upload-error{color:#b13b32}.photo-upload-error{font-size:12px;margin-top:6px;overflow-wrap:anywhere}.pending-photo .photo-image img{transition:none}
 

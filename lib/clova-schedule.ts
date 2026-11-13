@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import type {ScheduleDraft} from './types';
-import {readScheduleNumber} from './schedule-pages.ts';
+import {assignScheduleTeams,readScheduleNumber,readScheduleTeam} from './schedule-pages.ts';
 
 export function ocrMonth(date=new Date()){return new Date(date.getTime()+9*3600000).toISOString().slice(0,7);}
 export function clovaConfig(env:{CLOVA_OCR_URL?:string;CLOVA_OCR_SECRET?:string;CLOVA_OCR_MONTHLY_LIMIT?:string}){
@@ -24,6 +24,7 @@ export function parseClovaSchedule(input:unknown):ScheduleDraft{
  const region=all.match(/([가-힣]+\s*\d*\s*구역)/)?.[1].replace(/\s/g,'')||'';
  const date=all.match(/(20\d{2})\s*[년.\-/]\s*(\d{1,2})\s*[월.\-/]\s*(\d{1,2})/);
  const draft:ScheduleDraft={region,date:date?`${date[1]}-${date[2].padStart(2,'0')}-${date[3].padStart(2,'0')}`:'',folders:[],warnings:['CLOVA 인식 결과입니다. 이름의 영문 표기·주소·방문 시간과 일정 수를 원본과 비교해 주세요.']};
+ const dividers=new Map<number,string>();
  for(const table of image.tables){
   const cells=table.cells,lotHeader=cells.find(c=>compact(text(c))==='번지');
   if(!lotHeader)continue;
@@ -32,7 +33,10 @@ export function parseClovaSchedule(input:unknown):ScheduleDraft{
   const number=find(/^(번호|순번)$/),name=find(/^(성명|이름)$/),phone=find(/^연락처$/),time=find(/^(시간|방문시간)$/),address=find(/새주소|주소|비고/);
   if(!name||!phone||!time||!address)throw Error('일정표 열 구분을 확인하지 못했습니다. 원본을 보며 직접 입력해 주세요.');
   const headerEnd=Math.max(...headers.map(c=>c.rowIndex+c.rowSpan));
-  const body=cells.filter(c=>c.rowIndex>=headerEnd&&text(c)).sort((a,b)=>a.rowIndex-b.rowIndex||a.columnIndex-b.columnIndex);
+  const firstColumn=Math.min(...headers.map(c=>c.columnIndex));
+  const width=Math.max(...headers.map(c=>c.columnIndex+c.columnSpan))-firstColumn;
+  const separators=cells.filter(c=>c.rowIndex>=headerEnd&&c.columnIndex===firstColumn&&c.columnSpan>=width&&(!text(c)||readScheduleTeam(text(c))||/^(?:일반|구분)\s*건물/.test(text(c)))).sort((a,b)=>a.rowIndex-b.rowIndex);
+  const body=cells.filter(c=>c.rowIndex>=headerEnd&&text(c)&&!separators.includes(c)).sort((a,b)=>a.rowIndex-b.rowIndex||a.columnIndex-b.columnIndex);
   const rows=Map.groupBy(body,c=>c.rowIndex);
   const schedules:{row:number;sourceNumber?:number;numberEnd?:number}[]=[];
   for(const [row,starts] of rows){
@@ -46,7 +50,14 @@ export function parseClovaSchedule(input:unknown):ScheduleDraft{
    if(sourceNumber!==undefined)schedules.push({row,sourceNumber,numberEnd:row+numberCell!.rowSpan});
    else if(hasIdentity&&row>=(schedules.at(-1)?.numberEnd??row))schedules.push({row});
   }
+  let separatorIndex=0,previousNumber=draft.folders.at(-1)?.sourceNumber;
   for(const [i,schedule] of schedules.entries()){
+   while(separatorIndex<separators.length&&separators[separatorIndex].rowIndex<schedule.row){
+    dividers.set(draft.folders.length,text(separators[separatorIndex++]));
+   }
+   // CLOVA can omit an empty merged cell. A restart in the printed number column still marks the split.
+   if(!dividers.has(draft.folders.length)&&schedule.sourceNumber===1&&previousNumber!==undefined&&previousNumber>1)dividers.set(draft.folders.length,'');
+   previousNumber=schedule.sourceNumber??previousNumber;
    const start=i===0?headerEnd:schedule.row,end=schedules[i+1]?.row??Infinity;
    const rowCells=body.filter(c=>c.rowIndex<end&&c.rowIndex+c.rowSpan>start);
    const get=(column:number)=>rowCells.filter(c=>c.columnIndex===column).map(text).join('\n').trim();
@@ -62,6 +73,7 @@ export function parseClovaSchedule(input:unknown):ScheduleDraft{
    draft.folders.push({lot,unit:/\d\s*호/.test(addr)?compact(addr):'',name:compact(get(name.columnIndex)),phones:phoneText.match(/0\d{1,2}-\d{3,4}-\d{4}/g)||[],time:compact(get(time.columnIndex)),address:addr,notes,group:1,sourceNumber:schedule.sourceNumber});
   }
  }
+ assignScheduleTeams(draft.folders,dividers);
  if(!draft.folders.length)throw Error('일정표의 표를 찾지 못했습니다. 표 추출 설정을 확인하거나 직접 입력해 주세요.');
  if(draft.folders.length>100)throw Error('일정이 100개를 넘습니다. 사진을 나눠 주세요.');
  return draft;

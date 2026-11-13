@@ -10,6 +10,23 @@ test('same-day continuation sheets follow printed numbering and retain their sou
  assert.deepEqual(result.folders.map(row=>row.sourcePage),[2,2,2,2,2,2,2,2,1,1,1,1,1]);
 });
 
+test('a continuation page inherits the team after the last divider, even if selected first',()=>{
+ const first=page(1,9),second=page(6,4);
+ first.folders=[...first.folders,...page(1,5).folders.map(folder=>({...folder,group:2}))];
+ const result=mergeSchedulePages([second,first]);
+ assert.deepEqual(result.folders.map(row=>row.group),[...Array(9).fill(1),...Array(9).fill(2)]);
+ assert.deepEqual(result.folders.map(row=>row.sourceNumber),[1,2,3,4,5,6,7,8,9,1,2,3,4,5,6,7,8,9]);
+ assert.equal(result.folders.at(-1).sourcePage,1);
+});
+
+test('a building-type numbering restart still links a reversed continuation without adding a team',()=>{
+ const first=page(1,3),second=page(9,4);
+ first.folders.push(...page(1,8).folders.map(folder=>({...folder,lot:folder.lot+'호',group:1})));
+ const result=mergeSchedulePages([second,first]);
+ assert.deepEqual(result.folders.map(row=>row.sourceNumber),[1,2,3,1,2,3,4,5,6,7,8,9,10,11,12]);
+ assert.ok(result.folders.every(row=>row.group===1));
+});
+
 test('independent sheets with repeated numbering keep selection order and never merge rows by number',()=>{
  const first=page(1,3),second=page(1,2);
  second.folders[0].lot='가상동 200-1';
