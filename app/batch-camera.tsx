@@ -7,11 +7,14 @@ import {preferredCamera,quickRearLenses} from '@/lib/camera-lenses';
 import {savePending,deletePending} from '@/lib/pending-uploads';
 import {uploadId} from '@/lib/upload-id';
 import {drawCameraCaptureLeft} from '@/lib/camera-frame';
-type Capture={id:string;file:File;url:string};
+import {retryCaptureStorage} from '@/lib/capture-recovery';
+type Capture={id:string;file:File;url:string;localSaved:boolean;uploadFailed?:boolean};
 export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCancelUpload,onPendingChange}:{owner:string;folder:string;kind:'photo'|'drawing';disabled:boolean;progress:{done:number;total:number};onUpload:(files:File[])=>Promise<File[]>;onCancelUpload:()=>void;onPendingChange:(pending:boolean)=>void}){
   const [shots,setShots]=useState<Capture[]>([]),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [panel,setPanel]=useState<'photos'|'settings'|null>(null);
   const input=useRef<HTMLInputElement>(null),current=useRef<Capture[]>([]),uploadLock=useRef(false);
+  const storageLock=useRef(false),mounted=useRef(false);
+  const [workingLocally,setWorkingLocally]=useState(false);
   const trigger=useRef<HTMLButtonElement>(null),photosButton=useRef<HTMLButtonElement>(null),settingsButton=useRef<HTMLButtonElement>(null);
   const panelHeading=useRef<HTMLHeadingElement>(null);
   const video=useRef<HTMLVideoElement>(null),stream=useRef<MediaStream|null>(null),generation=useRef(0),captureLock=useRef(false);
@@ -20,7 +23,9 @@ export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCanc
   const rememberedLens=useRef('');
   const [previewReady,setPreviewReady]=useState(false);
   const quickLenses=quickRearLenses(lenses),lastShot=shots.at(-1);
-  const controlsLocked=busy||capturing||disabled;
+  const controlsLocked=busy||capturing||workingLocally||disabled;
+  const unprotected=shots.filter(shot=>!shot.localSaved).length;
+  const needsUploadRetry=shots.some(shot=>shot.uploadFailed);
   useEffect(()=>{if(panel)panelHeading.current?.focus();},[panel]);
   function closePanel(){
     (panel==='photos'?photosButton:settingsButton).current?.focus();
@@ -99,34 +104,65 @@ export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCanc
     }catch{if(request===generation.current)setError('사진을 담지 못했습니다. 다시 촬영해 주세요.');}
     finally{captureLock.current=false;setCapturing(false);}
   }
-  function update(next:Capture[]){current.current=next;setShots(next);onPendingChange(next.length>0);}
-  useEffect(()=>()=>{for(const shot of current.current)URL.revokeObjectURL(shot.url);onPendingChange(false);},[onPendingChange]);
-  async function collect(files:File[]){
-    const accepted=files.filter(file=>file.size>0&&file.size<=20*1024*1024);
-    setError(accepted.length===files.length?'':'한 장당 20MB 이하의 사진만 담을 수 있습니다.');
-    try{await savePending(owner,folder,kind,accepted);}catch(e){setError((e instanceof Error?e.message:'기기 임시 보관 실패')+' 이 화면을 닫기 전에 서버로 업로드해 주세요.');}
-    update([...current.current,...accepted.map(file=>({id:crypto.randomUUID(),file,url:URL.createObjectURL(file)}))]);
+  function update(next:Capture[]){if(!mounted.current)return;current.current=next;setShots(next);onPendingChange(next.some(shot=>!shot.localSaved));}
+  useEffect(()=>{
+    mounted.current=true;
+    return ()=>{mounted.current=false;for(const shot of current.current)URL.revokeObjectURL(shot.url);onPendingChange(false);};
+  },[onPendingChange]);
+  async function storeOriginals(shotsToSave:Capture[],note=''){
+    if(storageLock.current||uploadLock.current)return;
+    storageLock.current=true;setWorkingLocally(true);
+    try{
+      const result=await retryCaptureStorage(shotsToSave,file=>savePending(owner,folder,kind,[file]));
+      if(!mounted.current)return;
+      update(result.shots);
+      setError([note,result.error?.message].filter(Boolean).join(' '));
+      if(result.error)setPanel('photos');
+    }finally{storageLock.current=false;if(mounted.current)setWorkingLocally(false);}
   }
-  function remove(id:string){const shot=current.current.find(s=>s.id===id);if(shot){URL.revokeObjectURL(shot.url);void deletePending(owner,uploadId(shot.file)).catch(()=>setError('기기 임시 보관을 정리하지 못했습니다. 미전송 사진 목록을 확인해 주세요.'));}update(current.current.filter(s=>s.id!==id));}
+  async function collect(files:File[]){
+    if(storageLock.current||uploadLock.current)return;
+    const accepted=files.filter(file=>file.size>0&&file.size<=20*1024*1024);
+    const note=accepted.length===files.length?'':'한 장당 20MB 이하의 사진만 담을 수 있습니다.';
+    if(!accepted.length){setError(note);return;}
+    const next=[...current.current,...accepted.map(file=>({id:crypto.randomUUID(),file,url:URL.createObjectURL(file),localSaved:false}))];
+    update(next);
+    await storeOriginals(next,note);
+  }
+  async function remove(id:string){
+    if(storageLock.current||uploadLock.current||captureLock.current)return;
+    const shot=current.current.find(s=>s.id===id);if(!shot)return;
+    if(!shot.localSaved&&!window.confirm('이 사진은 이 화면에만 남아 있습니다. 사진을 목록에서 뺄까요?'))return;
+    storageLock.current=true;setWorkingLocally(true);
+    try{
+      if(shot.localSaved)await deletePending(owner,uploadId(shot.file));
+      if(!mounted.current)return;
+      URL.revokeObjectURL(shot.url);update(current.current.filter(s=>s.id!==id));setError('');
+    }catch{if(mounted.current)setError('사진을 목록에서 빼지 못했습니다. 다시 시도해 주세요.');}
+    finally{storageLock.current=false;if(mounted.current)setWorkingLocally(false);}
+  }
   async function save(){
-    if(uploadLock.current||captureLock.current||disabled||!current.current.length)return;uploadLock.current=true;stopCamera();setBusy(true);setPanel(null);setError('');
+    if(uploadLock.current||captureLock.current||storageLock.current||disabled||!current.current.length)return;uploadLock.current=true;stopCamera();setBusy(true);setPanel(null);setError('');
     const batch=current.current;
     try{
       const failed=await onUpload(batch.map(s=>s.file));const failures=new Set(failed);
       for(const shot of batch)if(!failures.has(shot.file))URL.revokeObjectURL(shot.url);
-      const remaining=batch.filter(shot=>failures.has(shot.file));update(remaining);
+      const remaining=batch.filter(shot=>failures.has(shot.file)).map(shot=>({...shot,uploadFailed:true}));update(remaining);
       if(remaining.length){setError(`${remaining.length}장을 올리지 못했습니다. 남은 사진만 다시 업로드해 주세요.`);setPanel('photos');}else setOpen(false);
-    }catch{setError('업로드를 완료하지 못했습니다. 사진을 확인하고 다시 시도해 주세요.');setPanel('photos');}
+    }catch{update(batch.map(shot=>({...shot,uploadFailed:true})));setError('업로드를 완료하지 못했습니다. 사진을 확인하고 다시 시도해 주세요.');setPanel('photos');}
     finally{uploadLock.current=false;setBusy(false);}
   }
   function openNativeCamera(){stopCamera();setPanel(null);input.current?.click();}
   function changeOpen(value:boolean){
-    if(uploadLock.current||captureLock.current)return;
-    if(!value){stopCamera();setPanel(null);}
+    if(uploadLock.current||captureLock.current||storageLock.current)return;
+    if(!value){
+      if(current.current.some(shot=>!shot.localSaved)){setPanel('photos');setError('이 화면에만 있는 사진을 임시 저장하거나 업로드한 뒤 닫을 수 있습니다.');return;}
+      stopCamera();setPanel(null);
+    }
     setOpen(value);
   }
   return <>
-    <button ref={trigger} className="secondary-button camera-button" disabled={disabled||busy} onClick={()=>void startCamera()}><Camera size={17}/>{shots.length?`촬영 사진 ${shots.length}장`:'촬영'}</button>
+    <button ref={trigger} className="secondary-button camera-button" disabled={controlsLocked} onClick={()=>{if(current.current.length){setOpen(true);setPanel('photos');}else void startCamera();}}><Camera size={17}/>{shots.length?`촬영 사진 ${shots.length}장`:'촬영'}</button>
     <input ref={input} data-capture-queue type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>{const files=Array.from(e.target.files||[]);e.target.value='';if(files.length)void collect(files);}}/>
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="capture-dialog" showCloseButton={false} onInteractOutside={e=>e.preventDefault()}
@@ -135,7 +171,7 @@ export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCanc
         <div className="capture-view">
           <video className="capture-live-preview" ref={video} autoPlay muted playsInline aria-label="촬영 미리보기" onLoadedData={updatePreviewReady} onPlaying={updatePreviewReady} onResize={updatePreviewReady} onEmptied={()=>setPreviewReady(false)}/>
           <header className="capture-header">
-            <DialogClose className="capture-icon-button" aria-label="촬영 닫기" disabled={busy||capturing}><ArrowLeft size={23}/></DialogClose>
+            <DialogClose className="capture-icon-button" aria-label="촬영 닫기" disabled={busy||capturing||workingLocally}><ArrowLeft size={23}/></DialogClose>
             <DialogTitle>{kind==='drawing'?'도면 촬영':'현장 사진'}</DialogTitle>
             <DialogDescription className="sr-only">사진을 여러 장 촬영한 뒤 한 번에 업로드할 수 있습니다.</DialogDescription>
           </header>
@@ -165,12 +201,13 @@ export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCanc
             </div>
             {error&&<p className="capture-panel-error capture-error" role="alert">{error}</p>}
             {panel==='photos'?<>
-              <p className="capture-panel-note">업로드 전 사진은 이 기기에 임시 보관됩니다.</p>
+              <p className="capture-panel-note" role="status">{workingLocally?'기기 저장 상태 확인 중…':`${shots.length-unprotected}장 기기에 임시 저장됨${unprotected?` · ${unprotected}장 이 화면에만 있음`:''}`}</p>
+              {unprotected>0&&<><p className="capture-panel-note">임시 저장을 다시 시도하거나 서버에 업로드하세요. 원본을 따로 내려받을 수도 있습니다.</p><button className="capture-secondary" disabled={controlsLocked} onClick={()=>void storeOriginals(current.current)}>기기 임시 저장 다시 시도</button></>}
               {shots.length===0&&<p>담긴 사진이 없습니다.</p>}
               <div className="capture-grid">{shots.map((shot,index)=><figure key={shot.id}>
                 <img src={shot.url} alt={`촬영 사진 ${index+1}`} loading="lazy"/>
-                <figcaption>{index+1}번 사진 · <a href={shot.url} download={shot.file.name}>원본 보관</a></figcaption>
-                <button className="capture-secondary" aria-label={`촬영 사진 ${index+1} 빼기`} onClick={()=>remove(shot.id)}><Trash2 size={16}/>빼기</button>
+                <figcaption>{index+1}번 사진 · <a href={shot.url} download={shot.file.name}>원본 보관</a><span>{shot.localSaved?'기기에 임시 저장됨':'이 화면에만 있음'}{shot.uploadFailed?' · 업로드 실패':''}</span></figcaption>
+                <button className="capture-secondary" disabled={controlsLocked} aria-label={`촬영 사진 ${index+1} 빼기`} onClick={()=>void remove(shot.id)}><Trash2 size={16}/>빼기</button>
               </figure>)}</div>
             </>:<div className="capture-settings">
               {lenses.length>1&&<label>촬영 렌즈 <select value={lensId} disabled={controlsLocked||camera==='starting'} onChange={e=>void startCamera(e.target.value)}>
@@ -184,7 +221,7 @@ export function BatchCamera({owner,folder,kind,disabled,progress,onUpload,onCanc
         </div>
         <div className="capture-controls">
           <button className="capture-upload" disabled={controlsLocked||!shots.length} onClick={()=>void save()}>
-            <CloudUpload size={18}/>{busy?'업로드 중…':`${shots.length}장 업로드`}
+            <CloudUpload size={18}/>{busy?'업로드 중…':needsUploadRetry?`남은 ${shots.length}장 재시도`:`${shots.length}장 업로드`}
           </button>
           <button className="capture-shutter" aria-label="사진 촬영" disabled={controlsLocked||!!panel||camera!=='ready'||!previewReady} onClick={()=>void capture()}/>
           <div className="capture-tools">

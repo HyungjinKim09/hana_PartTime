@@ -2,6 +2,7 @@ import {Folder as FolderIcon,Image as ImageIcon,ChevronRight,Clock,CheckCircle2,
 import type {LibraryCard,LibrarySummary} from '@/lib/library-types';
 import {DownloadSummary} from './folder-download-status';
 import {SurveyParticipants} from './survey-participants';
+import {scheduleTeamLabel} from '@/lib/schedule-pages';
 export function LibraryVisitSummary({summary}:{summary:LibrarySummary}){return <span className="folder-visit-summary">{summary.schedules===1&&<span className="folder-visit-time"><Clock size={14}/>{summary.time?.trim()||'시간 미정'}</span>}<span className={'folder-visit-status'+(summary.completed===summary.schedules?' is-complete':'')}>{summary.completed===summary.schedules?<CheckCircle2 size={14}/>:<Circle size={14}/>} {summary.schedules===1?summary.status||'미완료':`완료 ${summary.completed}/${summary.schedules}건`}</span></span>;}
 export function LibraryCards({cards,onOpen,search=false}:{cards:LibraryCard[];onOpen:(card:LibraryCard)=>void;search?:boolean}){
  if(!cards.length)return null;
@@ -12,7 +13,7 @@ export function LibraryCards({cards,onOpen,search=false}:{cards:LibraryCard[];on
     <span className="library-record-name">
      <span className="library-record-icon"><FolderIcon size={19} aria-hidden="true"/></span>
      <span><strong>{card.label}</strong>
-      {search&&<small>{card.target.region}{card.target.view==='date'?' · '+card.target.date:''}</small>}
+      {search&&<small>{card.target.region}{card.target.date?' · '+card.target.date:''}{card.team!==undefined?' · '+(card.team?scheduleTeamLabel(card.team):'팀 미지정'):''}</small>}
       {(search&&card.unitCount||!card.leaf)?<small>{search&&card.unitCount?`총 ${card.unitCount}개 호수`:`${card.children}개 하위 일정·폴더`}</small>:null}
      </span>
     </span>

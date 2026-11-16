@@ -6,16 +6,55 @@ import {uploadPhotos} from '@/lib/photo-upload';
 import type {Folder} from '@/lib/types';
 export function PendingUploads({owner,folders,disabled,onBusy,onDone}:{owner:string;folders:Folder[];disabled:boolean;onBusy:(busy:boolean)=>void;onDone:(folderIds:string[])=>Promise<void>}){
  const [items,setItems]=useState<PendingUpload[]>([]),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[progress,setProgress]=useState('');
+ const [fileErrors,setFileErrors]=useState<Record<string,string>>({});
  const controller=useRef<AbortController|null>(null);
  const [count,setCount]=useState(0);const sequence=useRef(0);
  const reload=useCallback(()=>{const current=++sequence.current;void (open?listPending(owner).then(rows=>{if(current===sequence.current){setItems(rows);setCount(rows.length);}}):countPending(owner).then(value=>{if(current===sequence.current)setCount(value);})).catch(()=>{if(current===sequence.current)setError('이 기기의 임시 보관함을 읽지 못했습니다. 브라우저 저장소 권한을 확인해 주세요.');});},[owner,open]);
  useEffect(()=>{reload();return watchPending(reload);},[reload]);
  useEffect(()=>()=>controller.current?.abort(),[]);
- async function retry(){if(busy||disabled)return;setBusy(true);onBusy(true);setError('');const task=new AbortController();controller.current=task;
-  try{let done=0;const affected=new Set<string>();for(const item of items){if(task.signal.aborted)break;
-   const result=await uploadPhotos([item.file],item.folder,item.kind,{signal:task.signal,onSaved:async()=>{affected.add(item.folder);await deletePending(owner,item.id);},onError:(_file,e)=>setError(e.message)});done+=result.saved;setProgress(`${done} / ${items.length}장 저장`);
-  }if(affected.size)await onDone([...affected]);}finally{controller.current=null;setBusy(false);onBusy(false);reload();}
+ async function retry(targets:PendingUpload[]){
+  if(controller.current||disabled||!targets.length)return;
+  const task=new AbortController();controller.current=task;
+  setBusy(true);onBusy(true);setError('');setProgress(`0 / ${targets.length}장 전송 중`);
+  let saved=0,failed=0,processed=0;
+  const affected=new Set<string>();
+  try{
+   for(const item of targets){
+    if(task.signal.aborted)break;
+    let reason='';
+    const result=await uploadPhotos([item.file],item.folder,item.kind,{signal:task.signal,onError:(_file,e)=>{if(e.name!=='AbortError')reason=e.message;}});
+    if(result.saved){
+     saved++;affected.add(item.folder);
+     try{await deletePending(owner,item.id);}
+     catch{reason='서버 저장 완료 · 기기 임시 보관 정리 실패';}
+    }else if(!task.signal.aborted){failed++;reason||='사진을 올리지 못했습니다.';}
+    else break;
+    setFileErrors(previous=>({...previous,[item.id]:reason}));
+    setProgress(`${++processed} / ${targets.length}장 처리 중 · 저장 ${saved}장 · 실패 ${failed}장`);
+   }
+   if(affected.size)await onDone([...affected]);
+  }catch(e){setError(e instanceof Error?e.message:'전송 상태를 확인하지 못했습니다. 남은 사진으로 다시 시도해 주세요.');}
+  finally{
+   const pending=targets.length-processed;
+   setProgress(`${task.signal.aborted?'전송 중단 · ':''}서버 저장 ${saved}장 · 실패 ${failed}장${pending?` · 미전송 ${pending}장`:''}`);
+   controller.current=null;setBusy(false);onBusy(false);reload();
+  }
  }
  function download(item:PendingUpload){const url=URL.createObjectURL(item.file),a=document.createElement('a');a.href=url;a.download=item.file.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
- return <><button className="secondary-button" disabled={disabled||busy} onClick={()=>{reload();setOpen(true);}}>미전송 사진 {count>0?`${count}장`:''}</button><Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent><DialogHeader><DialogTitle>기기에 임시 보관한 사진</DialogTitle><DialogDescription>서버 저장이 확인된 사진만 자동으로 제거합니다. 브라우저 데이터 삭제나 기기 초기화 시 임시 사진은 복구할 수 없습니다.</DialogDescription></DialogHeader>{error&&<p className="error-banner" role="alert">{error}</p>}<p role="status">{progress||`${items.length}장 보관 중 · 최대 200장 / 512MB`}</p><div className="pending-recovery-list">{items.map(item=><div key={item.key}><strong>{item.file.name}</strong><small>{folders.find(f=>f.id===item.folder)?.lot||'다른 위치의 일정'} · {(item.file.size/1e6).toFixed(1)} MB</small><button className="subtle-button" onClick={()=>download(item)}>기기에 원본 저장</button><button className="subtle-button" disabled={busy} onClick={()=>{if(window.confirm('이 미전송 사진을 기기 임시 보관에서 삭제할까요?'))void deletePending(owner,item.id).then(reload).catch(()=>setError('삭제하지 못했습니다.'));}}>보관에서 삭제</button></div>)}</div>{busy?<button className="secondary-button" onClick={()=>controller.current?.abort()}>전송 중단</button>:<button className="primary-button" disabled={disabled||!items.length} onClick={()=>void retry()}>남은 사진 다시 업로드</button>}</DialogContent></Dialog></>;
+ return <>
+  <button className="secondary-button" disabled={disabled||busy} onClick={()=>{setProgress('');setOpen(true);}}>미전송 사진 {count>0?`${count}장`:''}</button>
+  <Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent>
+   <DialogHeader><DialogTitle>기기에 임시 보관한 사진</DialogTitle><DialogDescription>서버 저장이 확인된 사진만 자동으로 제거합니다. 브라우저 데이터 삭제나 기기 초기화 시 임시 사진은 복구할 수 없습니다.</DialogDescription></DialogHeader>
+   {error&&<div className="error-banner" role="alert"><p>{error}</p><button className="secondary-button" disabled={busy} onClick={()=>{setError('');reload();}}>목록 다시 확인</button></div>}
+   <p role="status">{progress||`${items.length}장 보관 중 · 최대 200장 / 512MB`}</p>
+   <div className="pending-recovery-list">{items.map(item=><div key={item.key}>
+    <strong>{item.file.name}</strong><small>{folders.find(f=>f.id===item.folder)?.lot||'다른 위치의 일정'} · {(item.file.size/1e6).toFixed(1)} MB</small>
+    {fileErrors[item.id]&&<p>{fileErrors[item.id]}</p>}
+    <button className="subtle-button" disabled={busy||disabled} onClick={()=>void retry([item])}>이 사진 다시 올리기</button>
+    <button className="subtle-button" onClick={()=>download(item)}>기기에 원본 저장</button>
+    <button className="subtle-button" disabled={busy} onClick={()=>{if(window.confirm('이 미전송 사진을 기기 임시 보관에서 삭제할까요?'))void deletePending(owner,item.id).then(reload).catch(()=>setError('삭제하지 못했습니다.'));}}>보관에서 삭제</button>
+   </div>)}</div>
+   {busy?<button className="secondary-button" onClick={()=>controller.current?.abort()}>전송 중단</button>:<button className="primary-button" disabled={disabled||!items.length} onClick={()=>void retry(items)}>남은 사진 다시 업로드</button>}
+  </DialogContent></Dialog>
+ </>;
 }

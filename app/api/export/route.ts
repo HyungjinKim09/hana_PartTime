@@ -8,6 +8,7 @@ import {safeFilename} from '@/lib/zip';
 import {archiveParts} from '@/lib/archive-parts';
 import {sha256} from '@/lib/backup-format';
 import {fieldPhotosForExport} from '@/lib/photo-page';
+import {scheduleTeamLabel} from '@/lib/schedule-pages';
 export const dynamic='force-dynamic';
 export function GET(){return json({error:'다운로드 버튼에서 다시 시작해 주세요.'},405);}
 export async function POST(request:Request){try{
@@ -16,16 +17,21 @@ export async function POST(request:Request){try{
   if(params.get('completed')==='1')return await recordCompletedArchive(request,db,user);
   const owner=user.owner;
   const folder=params.get('folder'),region=params.get('region'),date=params.get('date'),view=params.get('view');
+  const rawTeam=params.get('team');
+  if(rawTeam!==null&&(!region||!date||folder||view==='address'||!/^\d{1,2}$/.test(rawTeam)||Number(rawTeam)>20))throw new ApiError('다운로드할 조사 팀 범위를 확인해 주세요.');
+  const team=rawTeam===null?null:Number(rawTeam);
   const photosOnly=params.get('photosOnly')==='1';
   const allFolders=await listFolders(db,owner);
-  const {names:folderNames,nested:datePaths}=archiveFolderPaths(allFolders,view!=='address');
-  let folders=allFolders.filter(f=>(!folder||f.id===folder)&&(!region||f.region===region)&&(!date||f.date===date));
+  let folders=allFolders.filter(f=>(!folder||f.id===folder)&&(!region||f.region===region)&&(!date||f.date===date)&&(team===null||(f.team??0)===team));
   let addressPath:string[]=[];
   if(params.has('path')){try{const value=JSON.parse(params.get('path')!);if(!Array.isArray(value)||value.length>4||!value.every(x=>typeof x==='string'&&x.length<1000))throw Error();addressPath=value;}catch{throw new ApiError('주소 경로를 확인해 주세요.');}}
   if(view==='address'&&folder){const target=allFolders.find(f=>f.id===folder);folders=target?matchingAddress(allFolders,target).filter(f=>view==='address'||f.date===target.date):[];}
   if(view==='address')folders=folders.filter(f=>withinAddress(f,addressPath,view==='address'));
-  if(!folders.length)throw new ApiError('폴더를 찾을 수 없습니다.',404);
-  let name=safeFilename(folder?folderNames.get(folders[0].id)!:date||region||'현장사진_전체')+'.zip';
+  if(!folders.length&&params.get('preview')!=='1')throw new ApiError('폴더를 찾을 수 없습니다.',404);
+  if(params.get('preview')==='1')return json({schedules:folders.length,fieldPhotos:folders.reduce((n,f)=>n+(f.photoCount??0),0),withFieldPhotos:folders.filter(f=>(f.photoCount??0)>0).length,fieldBytes:folders.reduce((n,f)=>n+(f.photoBytes??0),0)});
+  const {names:folderNames,nested:datePaths}=archiveFolderPaths(allFolders,view!=='address');
+  const teamSuffix=team===null?'':`_${team?scheduleTeamLabel(team):'팀 미지정'}`;
+  let name=safeFilename(folder?folderNames.get(folders[0].id)!:(date||region||'현장사진_전체')+teamSuffix)+'.zip';
   const {results}=await fieldPhotosForExport(db,owner,folders.map(f=>f.id));
   let entries:{name:string;size:number;url:string|null;key?:string}[]=[];
   const byFolder=new Map<string,typeof results>();for(const photo of results){const rows=byFolder.get(photo.folder)||[];rows.push(photo);byFolder.set(photo.folder,rows);}

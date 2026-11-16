@@ -102,7 +102,12 @@
 .view-switch button { padding: 7px 14px; min-height: 44px; border-radius: 6px; color: var(--muted-foreground); }
 .view-switch button[aria-pressed="true"] { color: var(--primary-text); background: var(--card); box-shadow: 0 0 0 1px var(--border); }
 .browse-toolbar .folder-search { margin: 0; }
-.browse-toolbar .folder-search > label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.browse-toolbar .folder-search > label[for="folder-search-input"] { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.search-range { margin: 6px 0 0; overflow-wrap: anywhere; }
+.team-range-control { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; color: var(--foreground); font-size: .875rem; }
+.team-range-control select { min-height: 44px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--input); border-radius: var(--radius); background: var(--card); color: var(--foreground); font-size: 1rem; }
+.archive-dialog .export-summary { margin-bottom: 8px; overflow-wrap: anywhere; }
+.archive-dialog .export-help summary { cursor: pointer; }
 .browse-toolbar .folder-search-input { color: var(--muted-foreground); border-color: var(--input); border-radius: var(--radius); }
 .browse-toolbar .folder-search-input:focus-within { outline-color: var(--ring); }
 .workspace-utilities { display: flex; gap: 8px 12px; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 16px; }

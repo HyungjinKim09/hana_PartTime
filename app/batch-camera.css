@@ -234,3 +234,4 @@
   .capture-tools { grid-auto-flow: column; gap: 0; }
   .capture-photos img, .capture-empty-thumb { width: 32px; height: 32px; }
 }
+.capture-grid figcaption span { display: block; }
