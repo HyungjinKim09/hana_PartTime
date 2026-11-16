@@ -15,9 +15,11 @@ export async function PATCH(request:Request){
     // One atomic update retains the folder ID, original files and survey records.
     // OR IGNORE handles a concurrent move to the same unique schedule key.
     const saved=await db.prepare(`UPDATE OR IGNORE survey_folders SET
-      region=?,survey_date=?,lot=?,unit=?,unit_display=?,time=?,name=?,phones=?,address=?,notes=?,updated_by=?,schedule_updated_by=?,revision=revision+1
+      region=?,survey_date=?,lot=?,unit=?,unit_display=?,time=?,name=?,phones=?,address=?,notes=?,
+      schedule_team=CASE WHEN ? THEN ? ELSE schedule_team END,
+      updated_by=?,schedule_updated_by=?,revision=revision+1
       WHERE owner=? AND id=? AND revision=? AND deleting=0 RETURNING *`)
-      .bind(draft.region,draft.date,draft.lot,draft.unit,draft.unitDisplay,draft.time,draft.name,JSON.stringify(draft.phones),draft.address,draft.notes,attribution(user),attribution(user),owner,draft.id,draft.revision).first<FolderRow>();
+      .bind(draft.region,draft.date,draft.lot,draft.unit,draft.unitDisplay,draft.time,draft.name,JSON.stringify(draft.phones),draft.address,draft.notes,draft.team!==undefined,draft.team??null,attribution(user),attribution(user),owner,draft.id,draft.revision).first<FolderRow>();
     if(saved)return json({folder:folderView(saved)});
     const latest=await findFolder(db,owner,draft.id);
     if(!latest)throw new ApiError('일정을 찾을 수 없습니다. 삭제 여부를 확인해 주세요.',404);
@@ -56,7 +58,7 @@ export async function POST(request:Request){
     let added=0;
     try{
       for(const {key,type,file} of sources)await bucket.put(key,new Uint8Array(await file.arrayBuffer()),{httpMetadata:{contentType:type}});
-      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning,manual_added,unit_display,created_by,schedule_team) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING RETURNING id').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0,manual?1:0,manual?String((input as {folders:{unit?:string}[]}).folders[index]?.unit||'').normalize('NFC').trim().replace(/\s+/g,' '):f.unit,stamp,teamSchedule?f.group:null));
+      const statements=unique.map((f,index)=>db.prepare('INSERT INTO survey_folders (owner,id,region,survey_date,lot,unit,time,name,phones,address,notes,group_index,sort_index,warning,manual_added,unit_display,created_by,schedule_team) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner,region,survey_date,lot,unit) DO NOTHING RETURNING id').bind(owner,crypto.randomUUID(),draft.region,draft.date,f.lot,f.unit,f.time,f.name,JSON.stringify(f.phones),f.address,f.notes,f.group,index,0,manual?1:0,manual?String((input as {folders:{unit?:string}[]}).folders[index]?.unit||'').normalize('NFC').trim().replace(/\s+/g,' '):f.unit,stamp,manual?f.team??null:teamSchedule?f.group:null));
       if(teamSchedule){
         const rows=JSON.stringify(unique.map(({lot,unit,group},index)=>({lot,unit,group,index})));
         statements.push(db.prepare(`UPDATE survey_folders AS f SET schedule_team=json_extract(row.value,'$.group'),

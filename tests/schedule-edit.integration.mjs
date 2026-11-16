@@ -31,5 +31,44 @@ try{
  assert.equal((await patch(input,{cookie:''})).status,401);
  await t.db.prepare("UPDATE survey_folders SET owner='other-owner' WHERE id='keep-me'").run();assert.equal((await patch({...input,id:'keep-me'})).status,404);
  await t.db.prepare("UPDATE survey_folders SET deleting=1 WHERE id='edit-me'").run();assert.equal((await patch(input)).status,404);
- console.log('PASS: schedule edit preserves files/records, moves only selected schedule, validates uniqueness and fences stale/cross-owner writes');
+ const {id:oldId,revision:oldRevision,region,date,...details}=input;
+ const add=team=>t.request('/api/schedules',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({region,date,folders:[{...details,lot:'망미동 600-1',group:1,team}]})});
+ assert.equal((await add(21)).status,400);
+ assert.equal((await add(2)).status,201);
+ const scope=new URLSearchParams({region,date});
+ async function teamPage(team){
+  const response=await t.request('/api/library?'+scope+'&team='+team);
+  assert.equal(response.status,200);
+  return response.json();
+ }
+ const created=(await teamPage(2)).cards[0];
+ assert.ok(created);
+ const change={...details,lot:'망미동 600-1',region,date,id:created.target.folder,revision:1};
+ const report=async()=>{
+  const response=await t.request('/api/report?'+scope);
+  assert.equal(response.status,200);
+  return response.json();
+ };
+ assert.match((await report()).text,/B팀 현장조사 일일보고[\s\S]*추가일정/);
+ await t.request('/api/folders',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id:change.id,revision:1,remarks:'직접 조사한 기록',buildingDetails:'',surveyStatus:'완료'})}).then(response=>assert.equal(response.status,200));
+ const personal=async()=>{
+  const response=await t.request('/api/my-work?mode=report&'+scope);
+  assert.equal(response.status,200);
+  return response.json();
+ };
+ assert.match((await personal()).text,/B팀 현장조사 일일보고[\s\S]*직접 조사한 기록/);
+ const shifted=await patch({...change,revision:2,team:1});
+ assert.equal(shifted.status,200);assert.equal((await shifted.json()).folder.team,1);
+ assert.equal((await teamPage(2)).cards.length,0);
+ assert.equal((await teamPage(1)).cards[0].target.folder,change.id);
+ assert.match((await personal()).text,/A팀 현장조사 일일보고[\s\S]*직접 조사한 기록/);
+ const legacyEdit=await patch({...change,revision:3,time:'15:00'});
+ assert.equal(legacyEdit.status,200);assert.equal((await legacyEdit.json()).folder.team,1);
+ const cleared=await patch({...change,revision:4,team:null});
+ assert.equal(cleared.status,200);assert.equal((await cleared.json()).folder.team,undefined);
+ const unassigned=await teamPage(0);
+ assert.equal(unassigned.cards[0].target.folder,change.id);
+ assert.equal(unassigned.totalCards,1);
+ assert.doesNotMatch((await report()).text,/[AB]팀 현장조사 일일보고/);
+ console.log('PASS: schedule edits preserve files and records, and manual team changes update folder lists and reports');
 }finally{await t.close();}

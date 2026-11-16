@@ -377,11 +377,18 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
     {drawingPhoto&&<Suspense fallback={<div role="status">도면 편집기를 불러오는 중…</div>}><DrawingEditor key={drawingPhoto.id} photo={drawingPhoto} onClose={()=>setDrawingPhoto(null)}/></Suspense>}
     {editingSchedule&&<EditSchedule key={editingSchedule.id} folder={editingSchedule} onClose={()=>setEditingSchedule(null)} onSaved={async updated=>{
       setFolders(previous=>previous.map(f=>f.id===updated.id?{...f,...updated,count:f.count,bytes:f.bytes,photoCount:f.photoCount,photoBytes:f.photoBytes,drawingCount:f.drawingCount}:f));
+      if(editingSchedule.team!==updated.team)setTeamFilter({region:updated.region,date:updated.date,team:updated.team??0});
       setEditingSchedule(null);navigationGuard.current.editingSchedule=false;
       location(updated.region,updated.date,updated.id,view==='address'?addressParts(updated,true).map(p=>p.key):[]);
       await refresh(updated.id,true);
     }}/>}
-    {importing&&<ImportSchedule open manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d)=>{cache.current.invalidate();setImporting(false);const same=locationUrl(r,d,null)===window.location.pathname+window.location.search+window.location.hash;location(r,d);if(same)void refresh(null,true);}}/>}
+    {importing&&<ImportSchedule open manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d,team)=>{
+      cache.current.invalidate();setImporting(false);
+      const same=locationUrl(r,d,null)===window.location.pathname+window.location.search+window.location.hash;
+      const switchTeam=view==='date'&&team!==undefined&&(!same||team!==selectedTeam);
+      if(switchTeam)setTeamFilter({region:r,date:d,team});
+      location(r,d);if(same&&!switchTeam)void refresh(null,true);
+    }}/>}
     <AlertDialog open={folderDelete} onOpenChange={open=>{if(!folderMutationBusy)setFolderDelete(open);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 폴더를 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{active?active.date+' · '+folderLabel(active):[region,date].filter(Boolean).join(' / ')}<br/>{active?1:summary.schedules}개 일정 폴더 · {active?active.count:summary.photos}장의 사진이 영구 삭제됩니다. {!active&&'이 범위의 일정표 원본도 함께 삭제됩니다.'} 마지막 건물 폴더를 삭제하면 해당 날짜의 일정표 원본도 함께 삭제됩니다. 삭제한 자료는 복구할 수 없습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={folderMutationBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={folderMutationBusy} onClick={e=>{e.preventDefault();void removeFolder();}}>{folderMutationBusy?'삭제 중…':'폴더와 자료 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog open={!!deleting} onOpenChange={open=>{if(!open&&!deleteBusy)setDeleting(null);}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>이 사진을 삭제할까요?</AlertDialogTitle><AlertDialogDescription>{deleting?.filename}<br/>보관함에서 원본이 영구 삭제되며 휴대폰과 PC 모두에서 사라집니다. 기기에 있는 사진은 삭제되지 않습니다.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>취소</AlertDialogCancel><AlertDialogAction disabled={deleteBusy} onClick={e=>{e.preventDefault();void removePhoto();}}>{deleteBusy?'삭제 중…':'사진 삭제'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </div>;
