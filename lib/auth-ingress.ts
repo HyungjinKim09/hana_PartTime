@@ -19,7 +19,7 @@ async function limitSiteRequest(request:Request,path:string,env:Cloudflare.Env,i
 
 // Mirror the router's segment decoding, dot/slash normalization and .rsc alias.
 // Classification never keys counters on a caller-controlled username or cookie.
-function requestPath(pathname:string){
+export function requestPath(pathname:string){
  const parts:string[]=[];
  for(const raw of pathname.split('/')){
   const part=decodeURIComponent(raw);

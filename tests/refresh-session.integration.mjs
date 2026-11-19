@@ -69,10 +69,16 @@ try{
  // A refresh racing logout must not recreate the deleted family, whichever operation wins.
  const racing=cookies(await login());await expire(racing);
  const [renewed,ended]=await Promise.all([refresh(racing),call('/api/session',racing,{method:'DELETE'})]);assert.equal(ended.status,200);
- if(renewed.status===200)assert.equal((await call('/api/members',cookies(renewed))).status,401);
+ if(renewed.status===200){
+  const raced=cookies(renewed);
+  assert.equal((await call('/api/members',raced)).status,200,'an issued signed access token remains valid until expiry');
+  assert.equal((await call('/api/members',raced,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,401,'sensitive account changes check revocation immediately');
+  expire(raced);assert.equal((await call('/api/members',raced)).status,401);
+ }
  assert.equal((await refresh(racing)).status,401);
  const inactive=cookies(await login());await t.db.prepare('UPDATE site_refresh_sessions SET expires_at=0 WHERE id=?').bind(inactive[refreshName].split('.')[0]).run();
- assert.equal((await call('/api/members',inactive)).status,401,'Idle expiry prevents privileged reads');
+ assert.equal((await call('/api/members',inactive)).status,200,'an unexpired access token can finish its 15-minute lifetime');
+ expire(inactive);assert.equal((await call('/api/members',inactive)).status,401,'expired access cannot renew an inactive refresh session');
  // Existing valid seven-day sessions upgrade without requiring another login.
  const legacy='a'.repeat(64),version=(await t.db.prepare('SELECT version FROM site_account WHERE id=1').first()).version;
  await t.db.prepare('INSERT INTO site_sessions(token_hash,version,expires_at) VALUES(?,?,?)').bind(hash(legacy),version,Date.now()+7*86400000).run();
@@ -84,6 +90,7 @@ try{
  assert.equal((await call('/api/session',legacyJar,{method:'DELETE'})).status,200);
  assert.equal((await refresh(cookies(upgraded[0]))).status,401,'Old proof logout revokes upgraded session too');
  const reset=await call('/api/account',{}, {method:'POST',headers:{'content-type':'application/json','x-admin-key':t.adminKey},body:JSON.stringify({username:'synthetic',password:'replacement-password-12345'})});assert.equal(reset.status,200);
- assert.equal((await refresh(second)).status,401);assert.equal((await call('/api/members',second)).status,401);
+ assert.equal((await refresh(second)).status,401);assert.equal((await call('/api/members',second)).status,200);
+ expire(second);assert.equal((await call('/api/members',second)).status,401);
  console.log('PASS: secure 15m/90d cookies, hash-only persistence, sliding expiry, automatic SSR/upload/ZIP refresh, concurrent tabs, replay window, logout/race, device isolation, inactivity, legacy upgrade and reset revocation');
 }finally{await t.close();}

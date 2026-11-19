@@ -3,7 +3,7 @@ import {COOKIE,REFRESH_COOKIE,cookieValue,lookupSession} from '../lib/session-lo
 import {refreshSession,tokenCookies,upgradeLegacySession} from '../lib/refresh-sessions';
 import {guardedBucket,BudgetError} from '../lib/r2-budget';
 import {withSessionRequest} from '../lib/session-context';
-import {requestIngress} from '../lib/auth-ingress';
+import {requestIngress,requestPath} from '../lib/auth-ingress';
 
 // Return the native R2 stream directly. Framework transport of binary bodies
 // adds per-chunk CPU cost, which can terminate large downloads on Workers Free.
@@ -35,10 +35,13 @@ async function handle(request:Request,env:Cloudflare.Env,ctx:ExecutionContext){
     }
 }
 
-const signedReadPaths=new Set(['/', '/api/activity', '/api/drawings', '/api/identity', '/api/library',
-  '/api/my-work', '/api/report', '/api/schedules']);
-function allowsSignedRead(request:Request,path:string){
-  return request.method==='GET'&&(signedReadPaths.has(path)||/^\/api\/photos\/[^/]+$/.test(path));
+function allowsSignedAccess(request:Request,path:string){
+  path=requestPath(path);
+  // Account credentials, member access and spending limits require an active session.
+  if(path==='/api/account'||path==='/api/session'||path.startsWith('/api/session/'))return false;
+  if(request.method!=='GET'&&(path==='/api/members'||path==='/api/settings'))return false;
+  // Ordinary reads, writes and original downloads accept the signed 15-minute token.
+  return path==='/'||path.startsWith('/api/');
 }
 
 export default {
@@ -66,7 +69,7 @@ export default {
     }catch{
       return Response.json({error:'로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'},{status:503,headers:{'Cache-Control':'no-store'}});
     }
-    },env.ADMIN_SETUP_KEY,allowsSignedRead(request,path));
+    },env.ADMIN_SETUP_KEY,allowsSignedAccess(request,path));
     if(!response.headers.get('content-type')?.startsWith('text/html'))return response;
 
     const document=new Response(response.body,response);

@@ -12,7 +12,7 @@ export async function lookupSession(db:D1Database,cookie:string){
   if(/^[a-f0-9]{64}$/.test(token))return lookupAccessProof(db,token);
   const claims=await requestAccess(token);
   if(!claims||claims.expires<=Date.now())return null;
-  if(signedReadAllowed())return claims.user;
+  if(signedAccessAllowed())return claims.user;
   return lookupAccessProof(db,claims.proof);
 }
 export function lookupAccessProof(db:D1Database,token:string){
@@ -21,4 +21,4 @@ export function lookupAccessProof(db:D1Database,token:string){
   const user=await db.prepare(`SELECT a.owner,COALESCE(m.username,a.username) AS username,COALESCE(m.display_name,'관리자 ('||a.username||')') AS displayName,s.member_id AS memberId,(s.member_id IS NULL) AS isAdmin FROM site_sessions s JOIN site_account a ON a.id=1 AND a.version=s.version LEFT JOIN site_members m ON m.id=s.member_id AND m.owner=a.owner WHERE s.token_hash=? AND s.expires_at>? AND ${memberSessionValid('s')} AND (s.family_id IS NULL OR EXISTS(SELECT 1 FROM site_refresh_sessions r WHERE r.id=s.family_id AND r.version=a.version AND r.member_id IS s.member_id AND r.member_version=s.member_version AND r.expires_at>?))`).bind(await digest(token),now,now).first<SessionUser>();return user?{...user,isAdmin:!!user.isAdmin}:null;
   });
 }
-import {requestAccess,requestSession,signedReadAllowed} from './session-context.ts';
+import {requestAccess,requestSession,signedAccessAllowed} from './session-context.ts';

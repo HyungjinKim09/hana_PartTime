@@ -6,13 +6,13 @@ type RequestScope={
   lookups:WeakMap<D1Database,Map<string,Promise<SessionUser|null>>>;
   signed:Map<string,ReturnType<typeof verifyAccess>>;
   secret?:string;
-  allowSignedRead:boolean;
+  allowSignedAccess:boolean;
 };
 const context=new AsyncLocalStorage<RequestScope>();
-export function withSessionRequest<T>(work:()=>T,secret?:string,allowSignedRead=false):T{
-  return context.run({lookups:new WeakMap(),signed:new Map(),secret,allowSignedRead},work);
+export function withSessionRequest<T>(work:()=>T,secret?:string,allowSignedAccess=false):T{
+  return context.run({lookups:new WeakMap(),signed:new Map(),secret,allowSignedAccess},work);
 }
-export function signedReadAllowed(){return context.getStore()?.allowSignedRead===true;}
+export function signedAccessAllowed(){return context.getStore()?.allowSignedAccess===true;}
 export function requestAccess(token:string){
   const scope=context.getStore();
   if(!scope)return Promise.resolve(null);
