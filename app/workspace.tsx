@@ -42,6 +42,8 @@ import {BatchCamera} from './batch-camera';
 import {uploadPhotos} from '@/lib/photo-upload';
 import {useUploadPreviews} from './use-upload-previews';
 import {PhotoPreview} from './photo-preview';
+import {GalleryImage} from './gallery-image';
+import {scrollBehavior} from '@/lib/motion';
 import {photoUrl} from '@/lib/photo-rotation';
 import {FolderPhotoRotation,type FolderRotationScope} from './folder-photo-rotation';
 const DrawingEditor=lazy(()=>import('./drawing-editor').then(m=>({default:m.DrawingEditor})));
@@ -234,7 +236,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
       window.history.pushState({...window.history.state,hanaNavigation:position},'',url);
       historyPosition.current=position;
     }
-    setMediaKind('photo');setSearchQuery('');setSearchTerm('');setAllTeamsForSearch(true);setView(mode);setAddressPath(path);setRegion(r);setDate(d);setSelected(id);setPreview(null);setRotationScope(null);setExportScope(undefined);window.scrollTo({top:0,behavior:'smooth'});
+    setMediaKind('photo');setSearchQuery('');setSearchTerm('');setAllTeamsForSearch(true);setView(mode);setAddressPath(path);setRegion(r);setDate(d);setSelected(id);setPreview(null);setRotationScope(null);setExportScope(undefined);window.scrollTo({top:0,behavior:scrollBehavior()});
   }
   function parentLocation(){if(addressPath.length)location(region,date,null,addressPath.slice(0,-1));else if(selected)location(region,date);else if(date)location(region);else location(null);}
   async function removeFolder(){
@@ -363,7 +365,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
               <div className="photo-meta"><strong title={item.file.name}>{item.file.name}</strong><span>{formatBytes(item.file.size)} · 기기 원본 미리보기</span><span className={'photo-upload-status '+item.status}>{item.status==='failed'?'저장 실패':item.status==='uploading'?'전송 중 · 아직 저장되지 않음':'전송 대기 · 아직 저장되지 않음'}</span>{item.error&&<p className="photo-upload-error">{item.error}</p>}</div>
             </article>)}
             {visiblePhotos.map(photo=><article className="photo-card" key={photo.id}>
-              <button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<img src={(photo.version?undefined:localPhotos.get(photo.id)?.url)||photoUrl(photo)} alt={photo.filename} loading="lazy" decoding="async"/>}</button>
+              <button className="photo-image" onClick={()=>setPreview(photo)} aria-label={photo.filename+' 크게 보기'}>{photo.content_type==='image/heic'?<div className="heic-placeholder"><ImageIcon size={34}/><span>HEIC 원본</span></div>:<GalleryImage key={photo.id+'/'+(photo.version||'')} photo={photo} localUrl={photo.version?undefined:localPhotos.get(photo.id)?.url}/>}</button>
               <div className="photo-meta"><strong title={photo.filename}>{photo.filename}</strong><span>{folderDates.get(photo.folder)} 조사 · {dateText(photo.created_at)} · {formatBytes(photo.size)}</span>{localPhotos.has(photo.id)&&<span className="photo-upload-status saved"><Check size={14}/>저장 완료 · {((localPhotos.get(photo.id)?.elapsedMs||0)/1000).toFixed(1)}초</span>}<AttributionLabel value={photo.createdBy} label="업로드"/>{photo.kind==='drawing'&&<button className="secondary-button" disabled={uploading} onClick={()=>setDrawingPhoto(photo)}>자동 도면 만들기 · 비지오</button>}<div className="photo-actions"><a href={'/api/photos/'+photo.id+'?download=1'} download aria-label={photo.filename+' 다운로드'}><ArrowDownToLine size={17}/></a><button disabled={uploading} onClick={()=>setDeleting(photo)} aria-label={photo.filename+' 삭제'}><Trash2 size={16}/></button></div></div>
             </article>)}
           </div>:!error&&<div className="empty-photos"><ImageIcon size={36} strokeWidth={1.2}/><h3>아직 보관한 {mediaLabel}이 없어요</h3><p>추가한 {mediaLabel}은 이 건물에 원본으로 저장됩니다.</p></div>}
@@ -406,7 +408,7 @@ export default function Workspace({userName,isAdmin=false,storageScope}:{userNam
       location(updated.region,updated.date,updated.id,view==='address'?addressParts(updated,true).map(p=>p.key):[]);
       await refresh(updated.id,true);
     }}/>}
-    {importing&&<ImportSchedule open manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d,team)=>{
+    {importing&&<ImportSchedule open owner={storageScope} manual={manualImport} initialRegion={region||''} initialDate={date||''} onClose={()=>setImporting(false)} onSaved={(r,d,team)=>{
       cache.current.invalidate();setImporting(false);
       const same=locationUrl(r,d,null)===window.location.pathname+window.location.search+window.location.hash;
       const switchTeam=view==='date'&&team!==undefined&&(!same||team!==selectedTeam);

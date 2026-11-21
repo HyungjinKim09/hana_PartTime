@@ -22,9 +22,12 @@ export function parseScheduleText(text:string,words:OcrWord[]=[]):ScheduleDraft{
   }
   return {region,date,folders,warnings:['인식한 지역·날짜·번지와 건물·호수를 원본과 비교해 주세요.']};
 }
-export async function recognizeSchedule(file:File,onProgress:(value:number)=>void):Promise<ScheduleDraft>{
+export async function recognizeSchedule(file:File,onProgress:(value:number)=>void,signal?:AbortSignal):Promise<ScheduleDraft>{
+  signal?.throwIfAborted();
   const {tableLines,readTableRows,readScheduleHeader}=await import('./table-ocr');
+  signal?.throwIfAborted();
   const bitmap=await createImageBitmap(file);
+  if(signal?.aborted){bitmap.close();signal.throwIfAborted();}
   const scale=Math.min(2200/bitmap.width,4000/bitmap.height);
   const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
   const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx){bitmap.close();throw new Error('사진을 열 수 없습니다.');}
@@ -33,12 +36,17 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
   const lines=tableLines(scan);
   const {createWorker}=await import('tesseract.js');
   const {refineMixedCell}=await import('./mixed-script-ocr');
+  signal?.throwIfAborted();
   // Korean tessdata requests an optional Traditional Chinese sublanguage;
   // limit initialization to the two models bundled with this application.
   const config:Partial<import('tesseract.js').InitOptions>&{tessedit_load_sublangs:string}={tessedit_load_sublangs:''};
-  const worker=await createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2',logger:m=>{if(!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config);
+  const workers=new Set<import('tesseract.js').Worker>();
+  const stop=()=>{for(const worker of workers)void worker.terminate().catch(()=>{});workers.clear();};
+  const track=async(start:()=>Promise<import('tesseract.js').Worker>)=>{signal?.throwIfAborted();const worker=await start();if(signal?.aborted){await worker.terminate();signal.throwIfAborted();}workers.add(worker);return worker;};
+  signal?.addEventListener('abort',stop,{once:true});
+  const worker=await track(()=>createWorker(['kor','eng'],1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2',logger:m=>{if(!signal?.aborted&&!lines&&m.status==='recognizing text')onProgress(Math.round(m.progress*100));}},config)).catch(error=>{signal?.removeEventListener('abort',stop);canvas.width=0;canvas.height=0;throw error;});
   let english:Promise<import('tesseract.js').Worker>|undefined;
-  const refine:import('./table-ocr').MixedCellReader=(data,image,kind)=>refineMixedCell(data,image,kind,()=>english??=createWorker('eng',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2'},config),async box=>{
+  const refine:import('./table-ocr').MixedCellReader=(data,image,kind)=>refineMixedCell(data,image,kind,()=>english??=track(()=>createWorker('eng',1,{workerPath:'/ocr/worker.min.js',corePath:'/ocr/tesseract-core-lstm.wasm.js',langPath:'/ocr',cachePath:'hana-ocr-best-v2'},config)),async box=>{
     const source=image as HTMLCanvasElement;
     const left=Math.max(0,box.x0),top=Math.max(0,box.y0),width=Math.min(source.width,box.x1)-left,height=Math.min(source.height,box.y1)-top;
     if(width<=0||height<=0)throw new Error('영문 위치를 확인하지 못했습니다.');
@@ -62,5 +70,5 @@ export async function recognizeSchedule(file:File,onProgress:(value:number)=>voi
     const {data}=await worker.recognize(canvas,{}, {text:true,blocks:true});
     const words=data.blocks?.flatMap(b=>b.paragraphs.flatMap(p=>p.lines.flatMap(l=>l.words)))||[];
     const result=parseScheduleText(data.text,words);result.warnings.unshift('표의 칸을 구분하지 못했습니다. 누락된 일정이 없는지 원본의 행 수와 비교해 주세요.');return result;
-  }finally{await worker.terminate();if(english)await english.then(w=>w.terminate()).catch(()=>{});}
+  }finally{signal?.removeEventListener('abort',stop);await Promise.allSettled([...workers].map(worker=>worker.terminate()));if(english)void english.catch(()=>{});canvas.width=0;canvas.height=0;}
 }

@@ -9,7 +9,7 @@ const scheduleFolder=z.object({
   time:z.string().max(100),name:z.string().max(100),phones:z.array(z.string().max(80)).max(10),address:z.string().max(300).transform(normalizeRoadAddress),notes:z.string().max(3000),group:z.number().int().min(1).max(20),team:z.number().int().min(1).max(20).nullish(),
 });
 const schema=z.object({region:component,date,folders:z.array(scheduleFolder).min(1,'일정이 한 개 이상 필요합니다.').max(100),warnings:z.array(z.string().max(500)).max(100).default([])});
-export function validateSchedule(input:unknown){const draft=schema.parse(input);const keys=new Set<string>();for(const f of draft.folders){const key=JSON.stringify([f.lot,f.unit]);if(keys.has(key))throw new Error('같은 번지의 일정은 건물·호수를 다르게 입력해 주세요.');keys.add(key);}return draft;}
+export function validateSchedule(input:unknown){const draft=schema.parse(input);const keys=new Set<string>();for(const [index,f] of draft.folders.entries()){const key=JSON.stringify([f.lot,f.unit]);if(keys.has(key))throw new z.ZodError([{code:'custom',path:['folders',index,'unit'],message:'같은 번지의 일정은 건물·호수를 다르게 입력해 주세요.'}]);keys.add(key);}return draft;}
 
 const editSchema=scheduleFolder.omit({group:true}).extend({
   id:z.string().min(1).max(150),revision:z.number().int().positive(),region:component,date,

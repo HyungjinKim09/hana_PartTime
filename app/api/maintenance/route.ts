@@ -8,7 +8,14 @@ export async function POST(request:Request){try{
   const attempt=item.object_key.split('/').at(-1);
   // Fence the old writer before checking whether it committed; never remove published objects.
   await db.prepare("UPDATE upload_receipts SET state='ready',attempt=? WHERE owner=? AND id=? AND attempt=? AND state='writing' AND started_at<?").bind(crypto.randomUUID(),owner,item.upload_id,attempt,before).run();
-  const live=await db.prepare('SELECT id FROM photos WHERE owner=? AND object_key=? UNION ALL SELECT id FROM restore_objects WHERE owner=? AND object_key=? LIMIT 1').bind(owner,item.object_key,owner,item.object_key).first();
+  // Preview and rotation writers also fence on this attempt. Keep an expired
+  // marker until R2 cleanup succeeds so an interrupted cleanup remains retryable.
+  await db.prepare('UPDATE upload_attempts SET upload_id=?,started_at=0 WHERE owner=? AND object_key=?').bind(crypto.randomUUID(),owner,item.object_key).run();
+  const photoId=item.object_key.split('/').at(-2)||'';
+  const live=await db.prepare(`SELECT id FROM photos WHERE owner=? AND object_key=?
+   UNION ALL SELECT id FROM photos WHERE owner=? AND id=? AND thumbnail_key=?
+   UNION ALL SELECT id FROM restore_objects WHERE owner=? AND object_key=? LIMIT 1`)
+   .bind(owner,item.object_key,owner,photoId,item.object_key,owner,item.object_key).first();
   if(!live){await bucket.delete(item.object_key);removed++;}
   await db.prepare('DELETE FROM upload_attempts WHERE object_key=? AND owner=?').bind(item.object_key,owner).run();
  }

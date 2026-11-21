@@ -94,7 +94,7 @@
   border-radius: 8px;
   color: inherit;
   background: transparent;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .capture-photos img, .capture-empty-thumb {
@@ -118,7 +118,7 @@
   border-radius: 10px;
   color: #fff;
   background: #292b34;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 650;
   line-height: 1.2;
 }
@@ -149,7 +149,7 @@
   border-radius: 28px;
   background: transparent;
   color: inherit;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 650;
   white-space: nowrap;
 }
@@ -187,22 +187,22 @@
   padding: 6px 10px;
   border-radius: 8px;
   background: #101116ed;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .capture-error { color: #fff; background: #6b252c; }
 .capture-panel { background: #181920; }
 .capture-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.capture-panel-header h2 { font-size: 17px; font-weight: 700; }
-.capture-panel-note { margin-bottom: 12px; color: #c7c9d4; font-size: 13px; }
-.capture-panel-error { margin-bottom: 10px; padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+.capture-panel-header h2 { font-size: 1.0625rem; font-weight: 700; }
+.capture-panel-note { margin-bottom: 12px; color: #c7c9d4; font-size: 0.8125rem; }
+.capture-panel-error { margin-bottom: 10px; padding: 6px 10px; border-radius: 8px; font-size: 0.8125rem; }
 .capture-settings { display: grid; justify-items: start; gap: 12px; }
 .capture-settings label { display: grid; gap: 4px; width: min(100%, 360px); }
 .capture-settings select { min-height: 44px; padding: 6px; background: #292b34; color: #fff; }
 .capture-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
 .capture-grid figure { min-width: 0; margin: 0; }
 .capture-grid img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #08090c; border-radius: 8px; }
-.capture-grid figcaption { margin: 6px 0; font-size: 13px; }
+.capture-grid figcaption { margin: 6px 0; font-size: 0.8125rem; }
 .capture-grid a { text-decoration: underline; }
 
 @media (orientation: landscape) {

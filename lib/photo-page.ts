@@ -13,7 +13,8 @@ export async function photoPage(db:D1Database,owner:string,ids:string[],kind:str
  const values:unknown[]=[JSON.stringify([...new Set(ids)]),owner];let where='p.owner=? AND p.folder=selected.value AND p.deleted=0';
  if(kind){where+=' AND kind=?';values.push(kind);}
  if(cursor){where+=' AND (p.created_at,p.id)<(?,?)';values.push(cursor.created,cursor.id);}
- const rows=await db.prepare(`SELECT p.id,p.folder,p.filename,p.content_type,p.size,p.created_at,p.kind,p.created_by,p.restored,p.version FROM json_each(?) selected CROSS JOIN photos p WHERE ${where} ORDER BY p.created_at DESC,p.id DESC LIMIT ?`).bind(...values,limit+1).all<Record<string,unknown>>();
- const photos=rows.results.slice(0,limit),last=photos.at(-1);
+ const rows=await db.prepare(`SELECT p.id,p.folder,p.filename,p.content_type,p.size,p.created_at,p.kind,p.created_by,p.restored,p.version,(p.thumbnail_key IS NOT NULL) AS thumbnail FROM json_each(?) selected CROSS JOIN photos p WHERE ${where} ORDER BY p.created_at DESC,p.id DESC LIMIT ?`).bind(...values,limit+1).all<Record<string,unknown>>();
+ const photos:Record<string,unknown>[]=rows.results.slice(0,limit).map(row=>({...row,thumbnail:Boolean(row.thumbnail)}));
+ const last=photos.at(-1);
  return {photos,nextCursor:rows.results.length>limit&&last?JSON.stringify({created:last.created_at,id:last.id}):null};
 }
